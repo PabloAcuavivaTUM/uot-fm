@@ -8,7 +8,7 @@ import ml_collections
 import numpy as np
 import orbax.checkpoint as obx
 import wandb
-
+import nice
 from models import get_model, get_vae_fns
 from utils import MetricComputer, get_translation_datasets, get_loss_builder
 
