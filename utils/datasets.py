@@ -1,15 +1,15 @@
+import csv
+import logging
+import os
 from typing import Callable, List, Optional, Tuple
 
-import csv
+import cv2
 import jax
 import jax.numpy as jnp
-import logging
-from ml_collections import ConfigDict
 import numpy as np
-import os
-import cv2
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from ml_collections import ConfigDict
 from tqdm import tqdm
 
 from utils import GenerationSampler
@@ -21,7 +21,9 @@ def get_translation_datasets(
     vae_encode_fn: Optional[Callable] = None,
 ) -> list[tf.data.Dataset]:
     """Get translation datasets and prepare them."""
-    train_source_data, train_target_data, eval_source_data, eval_target_data = get_data(config, shard, vae_encode_fn)
+    train_source_data, train_target_data, eval_source_data, eval_target_data = get_data(
+        config, shard, vae_encode_fn
+    )
     train_source_ds = prepare_dataset(train_source_data, config)
     eval_source_ds = prepare_dataset(eval_source_data, config, evaluation=True)
     train_target_ds = prepare_dataset(train_target_data, config)
@@ -29,7 +31,9 @@ def get_translation_datasets(
     return train_source_ds, train_target_ds, eval_source_ds, eval_target_ds
 
 
-def prepare_dataset(data: np.ndarray, config: ConfigDict, evaluation: bool = False) -> tfds.as_numpy:
+def prepare_dataset(
+    data: np.ndarray, config: ConfigDict, evaluation: bool = False
+) -> tfds.as_numpy:
     """Prepare dataset given config."""
     dataset = tf.data.Dataset.from_tensor_slices(data)
     dataset = dataset.map(
@@ -82,7 +86,9 @@ def central_crop(image: tf.Tensor, size: int) -> tf.Tensor:
 
 
 def get_data(
-    config: ConfigDict, shard: Optional[jax.sharding.Sharding] = None, vae_encode_fn: Optional[Callable] = None
+    config: ConfigDict,
+    shard: Optional[jax.sharding.Sharding] = None,
+    vae_encode_fn: Optional[Callable] = None,
 ) -> list[np.ndarray]:
     """Load source and target, train and evaluation data."""
     if config.data.target == "emnist":
@@ -100,7 +106,9 @@ def get_data(
         ) = emnist("test")
     elif config.data.target == "celeba_attribute":
         if vae_encode_fn is not None:
-            preprocess_fn = get_preprocess_fn(config, evaluation=True, precomputing=True)
+            preprocess_fn = get_preprocess_fn(
+                config, evaluation=True, precomputing=True
+            )
         else:
             preprocess_fn = None
         (
@@ -181,8 +189,12 @@ def emnist(split: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         data_x = np.load(f"{target_dir}/x_test.npy")
         data_y = np.load(f"{target_dir}/y_test.npy")
     elif split == "full":
-        data_x = np.concatenate([np.load(f"{target_dir}/x_train.npy"), np.load(f"{target_dir}/x_test.npy")])
-        data_y = np.concatenate([np.load(f"{target_dir}/y_train.npy"), np.load(f"{target_dir}/y_test.npy")])
+        data_x = np.concatenate(
+            [np.load(f"{target_dir}/x_train.npy"), np.load(f"{target_dir}/x_test.npy")]
+        )
+        data_y = np.concatenate(
+            [np.load(f"{target_dir}/y_train.npy"), np.load(f"{target_dir}/y_test.npy")]
+        )
     digits_indices = np.isin(data_y, np.array([0, 1, 8]))
     letters_indices = np.logical_not(digits_indices)
     source_data = data_x[digits_indices]
@@ -262,10 +274,18 @@ def celeba_attribute(
     # get filenames
     source_indices = split_indices * source_indices
     target_indices = split_indices * target_indices
-    source_filenames = [filename for filename, indice in zip(filenames, source_indices) if indice]
-    source_labels = np.array([label for label, indice in zip(label_int, source_indices) if indice])
-    target_filenames = [filename for filename, indice in zip(filenames, target_indices) if indice]
-    target_labels = np.array([label for label, indice in zip(label_int, target_indices) if indice])
+    source_filenames = [
+        filename for filename, indice in zip(filenames, source_indices) if indice
+    ]
+    source_labels = np.array(
+        [label for label, indice in zip(label_int, source_indices) if indice]
+    )
+    target_filenames = [
+        filename for filename, indice in zip(filenames, target_indices) if indice
+    ]
+    target_labels = np.array(
+        [label for label, indice in zip(label_int, target_indices) if indice]
+    )
 
     logging.info("Loading source and target data.")
     source_data = []
@@ -325,6 +345,33 @@ def celeba_attribute(
     return source_data, target_data, source_labels, target_labels
 
 
+def get_unbalanced_uniform_samplers(
+    input_dim: int = 2,
+    num_samples: int = 2000,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate unbalanced Gaussian data and return a tuple of data samplers."""
+    # generate source data
+    source_center_one = np.repeat(
+        np.array([0, -1])[None, :], int(num_samples * 1.5), axis=0
+    )
+    source_center_two = np.repeat(np.array([5, -1])[None, :], num_samples, axis=0)
+    source_center = np.concatenate([source_center_one, source_center_two])
+    source_data = source_center + np.random.uniform(
+        size=[int(num_samples * 1.5) + num_samples, input_dim], low=-0.5, high=0.5
+    )
+    # generate target data
+    target_center_one = np.repeat(np.array([0, 1])[None, :], num_samples, axis=0)
+    target_center_two = np.repeat(
+        np.array([5, 1])[None, :], int(num_samples * 1.5), axis=0
+    )
+    target_center = np.concatenate([target_center_one, target_center_two])
+    target_data = target_center + np.random.uniform(
+        size=[int(num_samples * 1.5) + num_samples, input_dim], low=-0.5, high=0.5
+    )
+    return source_data, target_data
+
+
+# ------------------
 def get_generation_datasets(config: ConfigDict) -> GenerationSampler:
     """Get generation dataset and create sampler."""
     train_data = cifar10("train")
@@ -338,25 +385,3 @@ def cifar10(split: str) -> np.ndarray:
         return x_train
     else:
         return x_test
-
-
-def get_unbalanced_uniform_samplers(
-    input_dim: int = 2,
-    num_samples: int = 2000,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate unbalanced Gaussian data and return a tuple of data samplers."""
-    # generate source data
-    source_center_one = np.repeat(np.array([0, -1])[None, :], int(num_samples * 1.5), axis=0)
-    source_center_two = np.repeat(np.array([5, -1])[None, :], num_samples, axis=0)
-    source_center = np.concatenate([source_center_one, source_center_two])
-    source_data = source_center + np.random.uniform(
-        size=[int(num_samples * 1.5) + num_samples, input_dim], low=-0.5, high=0.5
-    )
-    # generate target data
-    target_center_one = np.repeat(np.array([0, 1])[None, :], num_samples, axis=0)
-    target_center_two = np.repeat(np.array([5, 1])[None, :], int(num_samples * 1.5), axis=0)
-    target_center = np.concatenate([target_center_one, target_center_two])
-    target_data = target_center + np.random.uniform(
-        size=[int(num_samples * 1.5) + num_samples, input_dim], low=-0.5, high=0.5
-    )
-    return source_data, target_data
