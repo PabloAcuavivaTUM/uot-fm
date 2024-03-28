@@ -1,16 +1,18 @@
+import logging
+import os
+
 import equinox as eqx
 import jax
 import jax.experimental.mesh_utils as mesh_utils
 import jax.random as jr
 import jax.sharding as sharding
-import logging
 import ml_collections
 import numpy as np
 import orbax.checkpoint as obx
 import wandb
 
 from models import get_model, get_vae_fns
-from utils import MetricComputer, get_translation_datasets, get_loss_builder
+from utils import MetricComputer, get_loss_builder, get_translation_datasets
 
 
 def evaluate(config: ml_collections.ConfigDict, workdir: str):
@@ -47,7 +49,7 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
         create=True, max_to_keep=3, best_fn=lambda metric: metric, best_mode="min"
     )
     ckpt_mngr = obx.CheckpointManager(
-        directory=f"{workdir}/{config.name}/checkpoints",
+        directory=f"{os.getcwd()}/{workdir}/{config.name}/checkpoints",
         checkpointers=obx.Checkpointer(obx.PyTreeCheckpointHandler()),
         options=mngr_options,
     )

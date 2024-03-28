@@ -26,6 +26,6 @@ def get_base_config():
     eval.save_samples = True
     eval.num_save_samples = 7
     eval.labelwise = True
-    eval.checkpoint_step = 0
+    eval.checkpoint_step = None
 
     return config
