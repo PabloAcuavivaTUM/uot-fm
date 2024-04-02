@@ -1,11 +1,20 @@
 import ml_collections
-from wandb_config.py import get_wandb
+
+from warnings import warn
+
+from configs.wandb_config.py import get_wandb
 
 def get_base_config():
     config = ml_collections.ConfigDict()
     config.seed = 42
     config.overfit_to_one_batch = False
-    config = get_wandb(config)
+    try:
+        config = get_wandb(config)
+    except:
+        warn('It was not possible to set up any wandb configuration. Setting all values to empty')
+        config.wandb_key = ""
+        config.wandb_group = ""
+        config.wandb_entity = ""
 
     # training
     config.training = training = ml_collections.ConfigDict()
