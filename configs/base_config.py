@@ -1,13 +1,11 @@
 import ml_collections
-
+from wandb_config.py import get_wandb
 
 def get_base_config():
     config = ml_collections.ConfigDict()
     config.seed = 42
     config.overfit_to_one_batch = False
-    config.wandb_key = "84e9586da13a13e932b1fbe9b8fd7ebb79289b7b"
-    config.wandb_group = "set-up"
-    config.wandb_entity = "uot-fm"
+    config = get_wandb(config)
 
     # training
     config.training = training = ml_collections.ConfigDict()
