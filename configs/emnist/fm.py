@@ -7,6 +7,6 @@ def get_config():
     config = get_fm_config()
     config = get_mlpmixer_config(config)
     config = get_emnist_letters_config(config)
-    config.name = "fm_emnist_letters"
+    config.name = "fm_emnist_letters_2"
 
     return config

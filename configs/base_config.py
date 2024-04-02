@@ -5,9 +5,9 @@ def get_base_config():
     config = ml_collections.ConfigDict()
     config.seed = 42
     config.overfit_to_one_batch = False
-    config.wandb_key = ""
-    config.wandb_group = ""
-    config.wandb_entity = ""
+    config.wandb_key = "84e9586da13a13e932b1fbe9b8fd7ebb79289b7b"
+    config.wandb_group = "set-up"
+    config.wandb_entity = "uot-fm"
 
     # training
     config.training = training = ml_collections.ConfigDict()
