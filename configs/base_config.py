@@ -2,7 +2,7 @@ import ml_collections
 
 from warnings import warn
 
-from configs.wandb_config.py import get_wandb
+from configs.wandb_config import get_wandb
 
 def get_base_config():
     config = ml_collections.ConfigDict()
