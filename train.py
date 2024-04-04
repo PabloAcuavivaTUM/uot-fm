@@ -1,26 +1,27 @@
+import logging
+import os
+
 import equinox as eqx
 import jax
 import jax.experimental.mesh_utils as mesh_utils
 import jax.numpy as jnp
 import jax.random as jr
 import jax.sharding as sharding
-import logging
 import ml_collections
 import numpy as np
 import optax
 import orbax.checkpoint as obx
-import os
-from tqdm import tqdm
 import wandb
+from tqdm import tqdm
 
 from models import get_model, get_vae_fns
 from utils import (
     BatchResampler,
     MetricComputer,
-    get_translation_datasets,
     get_generation_datasets,
     get_loss_builder,
     get_optimizer,
+    get_translation_datasets,
 )
 
 
@@ -76,7 +77,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
 
         @eqx.filter_jit(donate="all-except-first")
         def update_ema(curr_model, curr_ema_state):
-            _, ema_state = opt_ema.update(eqx.filter(curr_model, eqx.is_array), curr_ema_state)
+            _, ema_state = opt_ema.update(
+                eqx.filter(curr_model, eqx.is_array), curr_ema_state
+            )
             return ema_state
 
     else:
@@ -118,7 +121,12 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         # load last saved checkpoint
         resume_step = preemption_ckpt_mngr.latest_step()
         logging.info(f"Resuming training from step {resume_step}...")
-        restore_target = {"model": model, "opt_state": opt_state, "opt": opt, "ema_state": ema_state}
+        restore_target = {
+            "model": model,
+            "opt_state": opt_state,
+            "opt": opt,
+            "ema_state": ema_state,
+        }
         restored_ckpt = preemption_ckpt_mngr.restore(resume_step, restore_target)
         restored_model = eqx.filter(restored_ckpt["model"], eqx.is_array)
         model = eqx.combine(restored_model, static)
@@ -179,7 +187,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     combined_model = model
                 inference_model = eqx.tree_inference(combined_model, value=True)
                 eval_key, metrics_key = jr.split(eval_key, 2)
-                eval_dict = metric_computer.compute_metrics(inference_model, metrics_key)
+                eval_dict = metric_computer.compute_metrics(
+                    inference_model, metrics_key
+                )
                 logging.info(f"Step {step}, Metrics: {eval_dict}")
                 wandb.log(eval_dict, step=step)
                 if config.training.save_checkpoints:

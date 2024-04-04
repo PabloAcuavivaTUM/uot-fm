@@ -1,3 +1,6 @@
+# Ignore jupyter notebooks anywhere
+*.ipynb
+
 # Ignore wandb config
 configs/wandb*
 
