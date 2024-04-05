@@ -6,9 +6,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import ott.geometry.costs as costs
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
+
+from utils import ot_cost_fns
 
 
 @dataclass
@@ -52,6 +53,7 @@ class BatchResampler:
     tau_a: float = 1.0
     tau_b: float = 1.0
     epsilon: float = 1e-2
+    cost_fn: str = ("sqeuclidean",)
 
     def __post_init__(self):
         @eqx.filter_jit(donate="all")
@@ -61,7 +63,6 @@ class BatchResampler:
             target_batch: jax.Array,
             source_labels: Optional[jax.Array] = None,
             target_labels: Optional[jax.Array] = None,
-            cost_fn: str = "sqeuclidean",
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
@@ -70,6 +71,7 @@ class BatchResampler:
                 jnp.reshape(target_batch, [self.batch_size, -1]),
                 epsilon=self.epsilon,
                 scale_cost="mean",
+                cost_fn=ot_cost_fns[self.cost_fn],
             )
             ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
 

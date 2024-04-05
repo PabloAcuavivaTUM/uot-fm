@@ -62,6 +62,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             tau_a=config.training.tau_a,
             tau_b=config.training.tau_b,
             epsilon=config.training.epsilon,
+            cost_fn=config.training.ot_cost_fn,
         )
     # build model and optimization functions
     model = get_model(config, config.model.input_shape, model_key)
