@@ -17,7 +17,7 @@ ot_cost_fns = dict(
     sqeuclidean=costs.SqEuclidean(),
     l1_cost=costs.PNormP(p=1),
     euclidean=costs.Euclidean(),
-    arcos=costs.Arccos(),
+    arcos=costs.Arccos(n=1),
     cosine=costs.Cosine(),
     coulomb=CoulombCost(),
 )
