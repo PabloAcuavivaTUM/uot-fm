@@ -1,6 +1,6 @@
 # Ignore jupyter notebooks anywhere
 *.ipynb
-visualizations/*
+compare_cost_fn/*
 
 # Ignore wandb config
 configs/wandb*
