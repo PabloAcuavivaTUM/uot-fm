@@ -4,7 +4,7 @@ from configs.emnist.base_mlpmixer import get_mlpmixer_config
 
 
 def get_config():
-    ot_cost_fn = "cosine"
+    ot_cost_fn = "l1"
 
     config = get_uotfm_config()
     config = get_mlpmixer_config(config)

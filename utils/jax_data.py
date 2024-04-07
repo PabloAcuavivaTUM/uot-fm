@@ -9,7 +9,7 @@ import jax.random as jr
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
 
-from utils import cost_fns
+from .ot_cost_fns import cost_fns
 
 
 @dataclass
