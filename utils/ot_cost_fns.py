@@ -15,7 +15,7 @@ class CoulombCost(costs.CostFn):
 # ---
 ot_cost_fns = dict(
     sqeuclidean=costs.SqEuclidean(),
-    l1_cost=costs.PNormP(p=1),
+    l1=costs.PNormP(p=1),
     euclidean=costs.Euclidean(),
     arcos=costs.Arccos(n=1),
     cosine=costs.Cosine(),
