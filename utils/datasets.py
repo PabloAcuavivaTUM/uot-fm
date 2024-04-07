@@ -1,7 +1,7 @@
 import csv
 import logging
 import os
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Optional
 
 import cv2
 import jax
@@ -19,7 +19,7 @@ def get_translation_datasets(
     config: ConfigDict,
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
-) -> list[tf.data.Dataset]:
+) -> List[tf.data.Dataset]:
     """Get translation datasets and prepare them."""
     train_source_data, train_target_data, eval_source_data, eval_target_data = get_data(
         config, shard, vae_encode_fn
@@ -32,7 +32,7 @@ def get_translation_datasets(
 
 
 def prepare_dataset(
-    data: np.ndarray, config: ConfigDict, evaluation: bool = False
+    data: np.ndarray, config: ConfigDict, evaluation: bool = False, 
 ) -> tfds.as_numpy:
     """Prepare dataset given config."""
     dataset = tf.data.Dataset.from_tensor_slices(data)
@@ -89,7 +89,7 @@ def get_data(
     config: ConfigDict,
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
-) -> list[np.ndarray]:
+) -> List[np.ndarray]:
     """Load source and target, train and evaluation data."""
     if config.data.target == "emnist":
         (
@@ -219,6 +219,7 @@ def celeba_attribute(
     vae_encode_fn: Optional[Callable] = None,
     preprocess_fn: Optional[Callable] = None,
     subset_attribute_id: Optional[int] = None,
+    nsamples : Optional[int] = None, 
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load celeba attribute data.
@@ -233,6 +234,7 @@ def celeba_attribute(
         vae_encode_fn: Vae encode function
         preprocess_fn: Preprocess function
         subset_attribute_id: Subset attribute id to split on (0-39)
+        nsamples: Indicates the number of samples to load. Default None, load all. 
     """
 
     data_dir = "./data/celeba"
@@ -286,6 +288,12 @@ def celeba_attribute(
     target_labels = np.array(
         [label for label, indice in zip(label_int, target_indices) if indice]
     )
+    
+    if nsamples is not None:
+        source_filenames = source_filenames[:nsamples]
+        source_labels = source_labels[:nsamples]
+        target_filenames = target_filenames[:nsamples]
+        target_labels = target_labels[:nsamples]
 
     logging.info("Loading source and target data.")
     source_data = []
@@ -309,6 +317,8 @@ def celeba_attribute(
         target_data.append(image)
         if overfit_to_one_batch and len(target_data) == batch_size:
             break
+        
+        
     if vae_encode_fn is not None:
         logging.info("Precomputing VAE embedding.")
         batch_size = batch_size // 2
