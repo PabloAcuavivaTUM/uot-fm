@@ -6,7 +6,7 @@ def get_glasses_config(config):
     # data
     config.data.attribute_id = 15
     config.data.map_forward = True
-    config.data.precomputed_stats_file = "celeba256_glasses"
+    config.data.precomputed_stats_file = "celeba256_add-glasses"
     config.data.eval_labels = [17, 20, 201, 35]
 
     config.eval.labelwise = True

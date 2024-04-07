@@ -5,6 +5,7 @@ def get_celeba_config(config):
     config.task = "translation"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.01
+    config.training.ot_cost_fn = "sqeuclidean"
     # data
     config.data = data = ml_collections.ConfigDict()
     data.source = "celeba_attribute"

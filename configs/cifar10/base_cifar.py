@@ -3,12 +3,12 @@ import ml_collections
 
 def get_cifar_config(config):
     config.task = "generation"
-
     # training
     config.training.flow_sigma = 0.0
     config.training.num_steps = 300000
     config.training.eval_freq = 50000
     config.training.print_freq = 1000
+    config.training.ot_cost_fn = "sqeuclidean"
 
     # data
     config.data = data = ml_collections.ConfigDict()

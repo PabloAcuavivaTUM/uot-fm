@@ -1,14 +1,13 @@
+import functools as ft
+import logging
 from typing import Callable
 
-from absl import app
-from absl import flags
-import functools as ft
 import einops
 import jax
 import jax.numpy as jnp
-import logging
 import numpy as np
 import tensorflow as tf
+from absl import app, flags
 
 tf.config.experimental.set_visible_devices([], "GPU")
 import tensorflow_datasets as tfds
@@ -18,7 +17,9 @@ from models import inception
 from utils.datasets import celeba_attribute, central_crop, cifar10, emnist
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer("batch_size", 128, "Batch size for computing reference statistics.")
+flags.DEFINE_integer(
+    "batch_size", 128, "Batch size for computing reference statistics."
+)
 
 
 def prepare_dataset(data: np.ndarray, ds_name: str, batch_size: int) -> tfds.as_numpy:
@@ -61,7 +62,9 @@ def compute_fid_reference_stats(batch_size: int):
     apply_fn = ft.partial(model.apply, train=False)
 
     def compute_inception_acts(image_batch: jax.Array, repeat) -> jax.Array:
-        inception_input = einops.repeat(image_batch, "b c h w -> b h w (c repeat)", repeat=repeat)
+        inception_input = einops.repeat(
+            image_batch, "b c h w -> b h w (c repeat)", repeat=repeat
+        )
         inception_input = jax.image.resize(
             inception_input,
             shape=[image_batch.shape[0], 299, 299, 3],
@@ -112,15 +115,33 @@ def compute_fid_reference_stats(batch_size: int):
 
     # compute celeba256 stats
     celeba_attribute_dict = {
-        "male": {"attribute_id": 20, "map_forward": True, "subset_attributes": [15, 17, 35]},
-        "female": {"attribute_id": 20, "map_forward": False, "subset_attributes": [15, 17, 35]},
-        "add-glasses": {"attribute_id": 15, "map_forward": True, "subset_attributes": [17, 20, 201, 35]},
-        "remove-glasses": {"attribute_id": 15, "map_forward": False, "subset_attributes": [17, 20, 201, 35]},
+        "male": {
+            "attribute_id": 20,
+            "map_forward": True,
+            "subset_attributes": [15, 17, 35],
+        },
+        "female": {
+            "attribute_id": 20,
+            "map_forward": False,
+            "subset_attributes": [15, 17, 35],
+        },
+        "add-glasses": {
+            "attribute_id": 15,
+            "map_forward": True,
+            "subset_attributes": [17, 20, 201, 35],
+        },
+        "remove-glasses": {
+            "attribute_id": 15,
+            "map_forward": False,
+            "subset_attributes": [17, 20, 201, 35],
+        },
     }
     for name, data_args in celeba_attribute_dict.items():
         subset_attributes = data_args.pop("subset_attributes")
         logging.info(f"Computing reference statistics for celeba256 {name}")
-        _, target_data, _, _ = celeba_attribute("test", batch_size=batch_size, overfit_to_one_batch=False, **data_args)
+        _, target_data, _, _ = celeba_attribute(
+            "test", batch_size=batch_size, overfit_to_one_batch=False, **data_args
+        )
         loader = prepare_dataset(target_data, "celeba256", batch_size)
         inception_acts = []
         for batch in tqdm(loader):
@@ -142,7 +163,9 @@ def compute_fid_reference_stats(batch_size: int):
         np.savez(f"assets/stats/celeba64_{name}.npz", mu=mu, sigma=sigma)
         # compute celeba labelwise stats
         for subset_attribute in subset_attributes:
-            logging.info(f"Computing reference statistics for celeba256 {name}, label {subset_attribute}")
+            logging.info(
+                f"Computing reference statistics for celeba256 {name}, label {subset_attribute}"
+            )
             _, target_data, _, _ = celeba_attribute(
                 "full",
                 batch_size=batch_size,
@@ -158,8 +181,14 @@ def compute_fid_reference_stats(batch_size: int):
             inception_acts = jnp.concatenate(inception_acts, axis=0)
             mu = jnp.mean(inception_acts, axis=0)
             sigma = jnp.cov(inception_acts, rowvar=False)
-            np.savez(f"assets/stats/celeba256_{name}_{subset_attribute}.npz", mu=mu, sigma=sigma)
-            logging.info(f"Computing reference statistics for celeba64 {name}, label {subset_attribute}")
+            np.savez(
+                f"assets/stats/celeba256_{name}_{subset_attribute}.npz",
+                mu=mu,
+                sigma=sigma,
+            )
+            logging.info(
+                f"Computing reference statistics for celeba64 {name}, label {subset_attribute}"
+            )
             loader = prepare_dataset(target_data, "celeba64", batch_size)
             inception_acts = []
             for batch in tqdm(loader):
@@ -167,7 +196,11 @@ def compute_fid_reference_stats(batch_size: int):
             inception_acts = jnp.concatenate(inception_acts, axis=0)
             mu = jnp.mean(inception_acts, axis=0)
             sigma = jnp.cov(inception_acts, rowvar=False)
-            np.savez(f"assets/stats/celeba64_{name}_{subset_attribute}.npz", mu=mu, sigma=sigma)
+            np.savez(
+                f"assets/stats/celeba64_{name}_{subset_attribute}.npz",
+                mu=mu,
+                sigma=sigma,
+            )
 
 
 if __name__ == "__main__":

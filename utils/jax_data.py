@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import equinox as eqx
 import dm_pix as pix
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
+
+from utils import ot_cost_fns
 
 
 @dataclass
@@ -27,7 +29,9 @@ class GenerationSampler:
         @eqx.filter_jit
         def _sample(key: jax.random.KeyArray) -> jax.Array:
             """Jitted sample function."""
-            x = jax.random.choice(key, self.data, shape=[self.batch_size], p=self.weighting)
+            x = jax.random.choice(
+                key, self.data, shape=[self.batch_size], p=self.weighting
+            )
             x = x / 127.5 - 1.0
             if self.do_flip:
                 x = pix.random_flip_left_right(key, x)
@@ -49,6 +53,7 @@ class BatchResampler:
     tau_a: float = 1.0
     tau_b: float = 1.0
     epsilon: float = 1e-2
+    cost_fn: str = ("sqeuclidean",)
 
     def __post_init__(self):
         @eqx.filter_jit(donate="all")
@@ -66,17 +71,23 @@ class BatchResampler:
                 jnp.reshape(target_batch, [self.batch_size, -1]),
                 epsilon=self.epsilon,
                 scale_cost="mean",
+                cost_fn=ot_cost_fns[self.cost_fn],
             )
             ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
 
             # get flattened log transition matrix
             transition_matrix = jnp.log(ot_out.matrix.flatten())
             # sample from transition_matrix
-            indeces = jax.random.categorical(key, transition_matrix, shape=[self.batch_size])
+            indeces = jax.random.categorical(
+                key, transition_matrix, shape=[self.batch_size]
+            )
             resampled_indeces_source = indeces // self.batch_size
             resampled_indeces_target = indeces % self.batch_size
             if source_labels is None:
-                return source_batch[resampled_indeces_source], target_batch[resampled_indeces_target]
+                return (
+                    source_batch[resampled_indeces_source],
+                    target_batch[resampled_indeces_target],
+                )
             return (
                 source_batch[resampled_indeces_source],
                 target_batch[resampled_indeces_target],
@@ -95,4 +106,6 @@ class BatchResampler:
         target_labels: Optional[jax.Array] = None,
     ) -> Tuple[jax.Array, jax.Array]:
         """Sample data."""
-        return self.resample(key, source_batch, target_batch, source_labels, target_labels)
+        return self.resample(
+            key, source_batch, target_batch, source_labels, target_labels
+        )

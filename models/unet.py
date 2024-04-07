@@ -4,11 +4,11 @@ import math
 from collections.abc import Callable
 from typing import Optional, Union
 
-from einops import rearrange
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from einops import rearrange
 
 
 class SinusoidalPosEmb(eqx.Module):
@@ -49,11 +49,15 @@ class LinearTimeSelfAttention(eqx.Module):
         c, h, w = x.shape
         x = self.group_norm(x)
         qkv = self.to_qkv(x)
-        q, k, v = rearrange(qkv, "(qkv heads c) h w -> qkv heads c (h w)", heads=self.heads, qkv=3)
+        q, k, v = rearrange(
+            qkv, "(qkv heads c) h w -> qkv heads c (h w)", heads=self.heads, qkv=3
+        )
         k = jax.nn.softmax(k, axis=-1)
         context = jnp.einsum("hdn,hen->hde", k, v)
         out = jnp.einsum("hde,hdn->hen", context, q)
-        out = rearrange(out, "heads c (h w) -> (heads c) h w", heads=self.heads, h=h, w=w)
+        out = rearrange(
+            out, "heads c (h w) -> (heads c) h w", heads=self.heads, h=h, w=w
+        )
         return self.to_out(out)
 
 
@@ -105,7 +109,9 @@ class ResnetBlock(eqx.Module):
     scaling: Union[None, Callable, eqx.nn.ConvTranspose2d, eqx.nn.Conv2d]
     block1_groupnorm: eqx.nn.GroupNorm
     block1_conv: eqx.nn.Conv2d
-    block2_layers: list[Union[eqx.nn.GroupNorm, eqx.nn.Dropout, eqx.nn.Conv2d, Callable]]
+    block2_layers: list[
+        Union[eqx.nn.GroupNorm, eqx.nn.Dropout, eqx.nn.Conv2d, Callable]
+    ]
     res_conv: eqx.nn.Conv2d
     attn: Optional[Residual]
 
@@ -264,7 +270,9 @@ class UNet(eqx.Module):
             activation=jax.nn.silu,
             key=keys[0],
         )
-        self.first_conv = eqx.nn.Conv2d(data_channels, hidden_size, kernel_size=3, padding=1, key=keys[1])
+        self.first_conv = eqx.nn.Conv2d(
+            data_channels, hidden_size, kernel_size=3, padding=1, key=keys[1]
+        )
 
         h, w = in_height, in_width
         self.down_res_blocks = []

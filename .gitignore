@@ -1,5 +1,8 @@
 # Private wandb configuration
 configs/wandb_config.py
+# Ignore jupyter notebooks anywhere
+*.ipynb
+compare_cost_fn/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
