@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import ott.geometry.costs as costs
 
-__all__ = ["ot_cost_fns"]
+__all__ = ["cost_fns"]
 
 
 # CUSTOM COSTS
@@ -13,7 +13,7 @@ class CoulombCost(costs.CostFn):
 
 
 # ---
-ot_cost_fns = dict(
+cost_fns = dict(
     sqeuclidean=costs.SqEuclidean(),
     l1=costs.PNormP(p=1),
     euclidean=costs.Euclidean(),

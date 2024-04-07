@@ -9,7 +9,7 @@ import jax.random as jr
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
 
-from utils import ot_cost_fns
+from utils import cost_fns
 
 
 @dataclass
@@ -71,7 +71,7 @@ class BatchResampler:
                 jnp.reshape(target_batch, [self.batch_size, -1]),
                 epsilon=self.epsilon,
                 scale_cost="mean",
-                cost_fn=ot_cost_fns[self.cost_fn],
+                cost_fn=cost_fns[self.cost_fn],
             )
             ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
 
