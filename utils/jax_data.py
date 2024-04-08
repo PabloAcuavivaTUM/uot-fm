@@ -53,7 +53,7 @@ class BatchResampler:
     tau_a: float = 1.0
     tau_b: float = 1.0
     epsilon: float = 1e-2
-    cost_fn: str = ("sqeuclidean",)
+    cost_fn: str = "sqeuclidean"
 
     def __post_init__(self):
         @eqx.filter_jit(donate="all")
