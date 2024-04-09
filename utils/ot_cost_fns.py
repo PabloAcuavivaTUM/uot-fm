@@ -91,6 +91,10 @@ def create_cost_matrix(
         k_neighbors=k_neighbors,
         cost_fn=cost_fn,
     )
+
+    # Increase weight in adjacency matrix of close points. Make further points with smaller value
+    distances = jnp.exp(-distances)
+
     n = len(X) + len(Y) if Y is not None else len(X)
     a = jnp.zeros((n, n))
     adj_matrix = a.at[
