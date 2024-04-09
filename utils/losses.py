@@ -1,13 +1,13 @@
+import functools as ft
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import diffrax as dfx
 import equinox as eqx
-import functools as ft
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from ml_collections import ConfigDict
 import optax
+from ml_collections import ConfigDict
 
 
 def get_loss_builder(config: ConfigDict):
@@ -86,7 +86,9 @@ def get_optimizer(config: ConfigDict):
     else:
         raise ValueError(f"Unknown optimizer type {config.optim.type}")
     if config.optim.grad_clip > 0.0:
-        optimizer = optax.chain(optimizer, optax.clip_by_global_norm(config.optim.grad_clip))
+        optimizer = optax.chain(
+            optimizer, optax.clip_by_global_norm(config.optim.grad_clip)
+        )
     return optimizer
 
 
@@ -127,7 +129,9 @@ class FlowMatching:
         else:
             raise ValueError(f"Unknown noise schedule {self.gamma}")
 
-    def sample_xt(self, x1: jax.Array, x0: jax.Array, t: float, noise: jax.Array) -> jax.Array:
+    def sample_xt(
+        self, x1: jax.Array, x0: jax.Array, t: float, noise: jax.Array
+    ) -> jax.Array:
         mu_t = self.compute_mu_t(x1, x0, t)
         return mu_t + self.compute_gamma_t(t) * noise
 
@@ -164,7 +168,9 @@ class FlowMatching:
 
         return batch_loss_fn
 
-    def get_train_step_fn(self, loss_fn: Callable, opt_update: optax.GradientTransformation):
+    def get_train_step_fn(
+        self, loss_fn: Callable, opt_update: optax.GradientTransformation
+    ):
         """Returns a callable train function."""
         grad_value_loss_fn = eqx.filter_value_and_grad(loss_fn)
 

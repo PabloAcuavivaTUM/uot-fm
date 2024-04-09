@@ -20,10 +20,10 @@ def sinkhorn_matching(
     epsilon: float = 1e-2,
     scale_cost: Any = "mean",
     cost_fn=costs.SqEuclidean(),
-    mode: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
+    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
 ):
     B = X.shape[0]
-    if mode == "pointcloud":
+    if geometry == "pointcloud":
         geom = PointCloud(
             jnp.reshape(X, [B, -1]),
             jnp.reshape(Y, [B, -1]),

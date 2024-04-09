@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import dm_pix as pix
 import equinox as eqx
@@ -9,7 +9,7 @@ import jax.random as jr
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
 
-from .ot_cost_fns import cost_fns
+from .ot_cost_fns import cost_fns, create_cost_matrix
 
 
 @dataclass
@@ -63,17 +63,34 @@ class BatchResampler:
             target_batch: jax.Array,
             source_labels: Optional[jax.Array] = None,
             target_labels: Optional[jax.Array] = None,
+            geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
             # TODO: Add options with mode, similiar to sinkhor_matching in costs_fn_metrics to allow geodesic (and graph?)
-            geom = PointCloud(
-                jnp.reshape(source_batch, [self.batch_size, -1]),
-                jnp.reshape(target_batch, [self.batch_size, -1]),
-                epsilon=self.epsilon,
-                scale_cost="mean",
-                cost_fn=cost_fns[self.cost_fn],
-            )
+
+            if geometry == "pointcloud":
+                geom = PointCloud(
+                    jnp.reshape(source_batch, [self.batch_size, -1]),
+                    jnp.reshape(target_batch, [self.batch_size, -1]),
+                    epsilon=self.epsilon,
+                    scale_cost="mean",
+                    cost_fn=cost_fns[self.cost_fn],
+                )
+            else:
+                cm = create_cost_matrix(
+                    X=source_batch,
+                    Y=source_batch,
+                    k_neighbors=30,
+                    cost_fn=self.cost_fn,
+                    geometry=geometry,
+                )
+                geom = geometry.Geometry(
+                    cost_matrix=cm,
+                    epsilon=self.epsilon,
+                    scale_cost="mean",
+                )
+
             ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
 
             # get flattened log transition matrix
