@@ -148,6 +148,7 @@ class FlowMatching:
             noise = jr.normal(key, x1.shape)
             u_t = self.compute_flow(x1, x0)
             x_t = self.sample_xt(x1, x0, t, noise)
+            # TODO: Here we want to condition also on x0. Add x0 conditioning
             pred = model(t, x_t, key=key)
             return self.weight(t) * jnp.mean((pred - u_t) ** 2)
 
