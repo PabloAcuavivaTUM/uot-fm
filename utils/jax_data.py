@@ -66,6 +66,7 @@ class BatchResampler:
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
+            # TODO: Add options with mode, similiar to sinkhor_matching in costs_fn_metrics to allow geodesic (and graph?)
             geom = PointCloud(
                 jnp.reshape(source_batch, [self.batch_size, -1]),
                 jnp.reshape(target_batch, [self.batch_size, -1]),
