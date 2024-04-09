@@ -1,6 +1,6 @@
 import itertools
 import os
-from typing import Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union, Callable
 
 import jax
 import jax.numpy as jnp
@@ -110,7 +110,7 @@ def matrix_comparison_metrics(
     matrix1: ArrayLike,
 ):
     row_correlation = rowwise_correlation(matrix0, matrix1)
-    col_correlation = rowwise_correlation(jnp.transpose(matrix0), np.transpose(matrix1))
+    col_correlation = rowwise_correlation(jnp.transpose(matrix0), jnp.transpose(matrix1))
     metrics = dict(
         byrow_mean=jnp.mean(row_correlation),
         byrow_std=jnp.std(row_correlation),
@@ -137,6 +137,7 @@ def comparison_plot(
     compX: ArrayLike,
     k: Optional[int] = None,
     limit_elements_to_display: int = 32,
+    filename :  Optional[str] = None, 
 ):
     B = min(limit_elements_to_display, X.shape[0])
     if k is None:
@@ -151,6 +152,11 @@ def comparison_plot(
             axes[b, 1 + ki].imshow(compX[b, ki].transpose(1, 2, 0), cmap="gray")
             axes[b, 1 + ki].axis("off")
 
+    fig.tight_layout()
+    if filename:
+        fig.savefig(filename)
+
+
     return (
         fig,
         axes,
@@ -162,6 +168,7 @@ def sample_plot(
     Y: ArrayLike,
     nrow: int = 8,
     ncol: int = 8,
+    filename : Optional[str] = None, 
 ):
     fig, axes = plt.subplots(nrow, ncol, figsize=(ncol, nrow))
 
@@ -182,6 +189,10 @@ def sample_plot(
 
             axes[i, j].axis("off")
 
+    fig.tight_layout()
+    if filename:
+        fig.savefig(filename)
+        
     return fig, axes
 
 
@@ -192,6 +203,9 @@ def explore_cost_fn(
     sinkhorn_matching_kwargs: Optional[dict] = None,
     Y: Optional[np.ndarray] = None,
     labelY: Optional[np.ndarray] = None,
+    decode_fn : Optional[Callable] = None, 
+    decodedX : Optional[Callable] = None,
+    decodedY : Optional[Callable] = None, 
     nbatches: int = 1,
     batch_size: int = 32,
     summarize: bool = True,
@@ -333,25 +347,33 @@ def explore_cost_fn(
                 cost_fn=cost_fni,
                 **sinkhorn_matching_kwargs,
             )
-
+            
+            # Decode for plotting decoded images
+            if decode_fn is not None:
+                batchX = decode_fn(batchX)
+                batchY = decode_fn(batchY)
+            else:
+                if decodedX is not None:
+                    batchX = decodedX[batch_idxX]
+                if decodedY is not None:
+                    batchY = decodedY[batch_idxY]
+                
             top_k_elements = rowwise_take_top_k(matrixi, top_k=16, labels=batchY)
             fig, ax = comparison_plot(
                 batchX,
                 compX=top_k_elements,
                 limit_elements_to_display=32,
+                filename=os.path.join(cost_fn_folderi, "top_random_batch.jpg"),
             )
-            fig.tight_layout()
-            fig.savefig(os.path.join(cost_fn_folderi, "top_random_batch.jpg"))
-
+                        
             # Figures. Bottom
             bottom_k_elements = rowwise_take_top_k(-matrixi, top_k=16, labels=batchY)
             fig, ax = comparison_plot(
                 batchX,
                 compX=bottom_k_elements,
                 limit_elements_to_display=32,
+                filename=os.path.join(cost_fn_folderi, "bottom_random_batch.jpg"),
             )
-            fig.tight_layout()
-            fig.savefig(os.path.join(cost_fn_folderi, "bottom_random_batch.jpg"))
 
             # Figures. Sample
             key, key_sample = jax.random.split(key, 2)
@@ -363,9 +385,13 @@ def explore_cost_fn(
                 batch_size=batch_size,
             )
 
-            fig, ax = sample_plot(X=sampleX, Y=sampleY, nrow=16, ncol=16)
-            fig.tight_layout()
-            fig.savefig(os.path.join(cost_fn_folderi, "sample_random_batch.jpg"))
+            fig, ax = sample_plot(X=sampleX, 
+                                  Y=sampleY, 
+                                  nrow=16, 
+                                  ncol=16, 
+                                  filename=os.path.join(cost_fn_folderi, "sample_random_batch.jpg"),
+                    )
+            
 
             # Figures. Best and Worse Top and bottom k matching
             for metric in ["top_5", "bottom_5"]:
@@ -382,6 +408,16 @@ def explore_cost_fn(
                     cost_fn=cost_fni,
                     **sinkhorn_matching_kwargs,
                 )
+                
+                if decode_fn is not None:
+                    batchX = decode_fn(batchX)
+                    batchY = decode_fn(batchY)
+                else:
+                    if decodedX is not None:
+                        batchX = decodedX[batch_idxX]
+                    if decodedY is not None:
+                        batchY = decodedY[batch_idxY]
+                        
                 # If bottom, we consider the lowest ones
                 if metric == "bottom_5":
                     matrixi = -matrixi
@@ -391,11 +427,10 @@ def explore_cost_fn(
                     batchX,
                     compX=top_k_elements,
                     limit_elements_to_display=32,
+                    filename=os.path.join(cost_fn_folderi, f"best_{metric}.jpg"), 
                 )
 
-                # fig.suptitle(f"Best {metric}={metric_value:.2f}")
-                fig.tight_layout()
-                fig.savefig(os.path.join(cost_fn_folderi, f"best_{metric}.jpg"))
+
 
                 # Figures. Bottom
                 batch_idxX = batch_idxs["X"][np.argmin(metric_field)]
@@ -409,16 +444,24 @@ def explore_cost_fn(
                     cost_fn=cost_fni,
                     **sinkhorn_matching_kwargs,
                 )
+                
+                if decode_fn is not None:
+                    batchX = decode_fn(batchX)
+                    batchY = decode_fn(batchY)
+                else:
+                    if decodedX is not None:
+                        batchX = decodedX[batch_idxX]
+                    if decodedY is not None:
+                        batchY = decodedY[batch_idxY]
 
                 top_k_elements = rowwise_take_top_k(matrixi, top_k=5, labels=batchY)
                 fig, ax = comparison_plot(
                     batchX,
                     compX=top_k_elements,
                     limit_elements_to_display=32,
+                    filename=os.path.join(cost_fn_folderi, f"worse_{metric}.jpg"),
                 )
-                # fig.suptitle(f"Worse {metric}={metric_value:.2f}")
-                fig.tight_layout()
-                fig.savefig(os.path.join(cost_fn_folderi, f"worse_{metric}.jpg"))
+
 
     # Metrics Summarization
     if summarize:
