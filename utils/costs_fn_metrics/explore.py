@@ -366,7 +366,7 @@ def explore_cost_fn(
                 limit_elements_to_display=32,
                 filename=os.path.join(cost_fn_folderi, "top_random_batch.jpg"),
             )
-            fig.close()
+            plt.close(fig)
 
             # Figures. Bottom
             bottom_k_elements = rowwise_take_top_k(-matrixi, top_k=16, labels=batchY)
@@ -376,7 +376,7 @@ def explore_cost_fn(
                 limit_elements_to_display=32,
                 filename=os.path.join(cost_fn_folderi, "bottom_random_batch.jpg"),
             )
-            fig.close()
+            plt.close(fig)
 
             # Figures. Sample
             key, key_sample = jax.random.split(key, 2)
@@ -395,7 +395,7 @@ def explore_cost_fn(
                 ncol=16,
                 filename=os.path.join(cost_fn_folderi, "sample_random_batch.jpg"),
             )
-            fig.close()
+            plt.close(fig)
 
             # Figures. Best and Worse Top and bottom k matching
             for metric in ["top_5", "bottom_5"]:
@@ -433,7 +433,7 @@ def explore_cost_fn(
                     limit_elements_to_display=32,
                     filename=os.path.join(cost_fn_folderi, f"best_{metric}.jpg"),
                 )
-                fig.close()
+                plt.close(fig)
 
                 # Figures. Bottom
                 batch_idxX = batch_idxs["X"][np.argmin(metric_field)]
@@ -464,7 +464,7 @@ def explore_cost_fn(
                     limit_elements_to_display=32,
                     filename=os.path.join(cost_fn_folderi, f"worse_{metric}.jpg"),
                 )
-                fig.close()
+                plt.close(fig)
 
     # Metrics Summarization
     if summarize:
