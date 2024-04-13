@@ -85,6 +85,8 @@ def create_cost_matrix(
     geometry: Literal["graph", "geodesic"] = "geodesic",
     **kwargs: Any,
 ) -> jnp.array:
+    if geometry not in ["graph", "geodesic"]:
+        raise ValueError(f'geodesic must be in ["graph", "geodesic"], given {geodesic}')
     distances, indices = get_nearest_neighbors(
         X=X,
         Y=Y,

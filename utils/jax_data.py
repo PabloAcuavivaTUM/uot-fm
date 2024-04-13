@@ -54,7 +54,8 @@ class BatchResampler:
     tau_b: float = 1.0
     epsilon: float = 1e-2
     cost_fn: str = "sqeuclidean"
-
+    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
+    
     def __post_init__(self):
         @eqx.filter_jit(donate="all")
         def _resample(
@@ -63,13 +64,10 @@ class BatchResampler:
             target_batch: jax.Array,
             source_labels: Optional[jax.Array] = None,
             target_labels: Optional[jax.Array] = None,
-            geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
-            # TODO: Add options with mode, similiar to sinkhor_matching in costs_fn_metrics to allow geodesic (and graph?)
-
-            if geometry == "pointcloud":
+            if self.geometry == "pointcloud":
                 geom = PointCloud(
                     jnp.reshape(source_batch, [self.batch_size, -1]),
                     jnp.reshape(target_batch, [self.batch_size, -1]),
@@ -83,9 +81,9 @@ class BatchResampler:
                     Y=source_batch,
                     k_neighbors=30,
                     cost_fn=self.cost_fn,
-                    geometry=geometry,
+                    geometry=self.geometry,
                 )
-                geom = geometry.Geometry(
+                geom = self.geometry.Geometry(
                     cost_matrix=cm,
                     epsilon=self.epsilon,
                     scale_cost="mean",

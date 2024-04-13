@@ -11,7 +11,7 @@ def get_config():
     config = get_unet_config(config)
     config = get_celeba_config(config)
     config = get_glasses_config(config)
-    config.name = "uot-fm_celeba256_add_glasses"
+    config.name = f"uot-fm_celeba256_add_glasses_{ot_cost_fn}"
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
     

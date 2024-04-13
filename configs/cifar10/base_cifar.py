@@ -9,6 +9,7 @@ def get_cifar_config(config):
     config.training.eval_freq = 50000
     config.training.print_freq = 1000
     config.training.ot_cost_fn = "sqeuclidean"
+    config.training.ot_geometry = "pointcloud"
 
     # data
     config.data = data = ml_collections.ConfigDict()
