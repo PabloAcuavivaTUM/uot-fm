@@ -80,7 +80,7 @@ class BatchResampler:
                     X=source_batch,
                     Y=source_batch,
                     k_neighbors=30,
-                    cost_fn=self.cost_fn,
+                    cost_fn=cost_fns[self.cost_fn],
                     geometry=self.geometry,
                 )
                 geom = self.geometry.Geometry(
