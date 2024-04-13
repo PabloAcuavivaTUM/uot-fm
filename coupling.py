@@ -94,6 +94,7 @@ if __name__ == '__main__':
     celeba_labelX[celeba_labelX == -1] = 0
     celeba_labelY[celeba_labelY == -1] = 0
     
+    B = 512
     from utils.costs_fn_metrics import explore_cost_fn
     import ott.geometry.costs as costs
     from utils.ot_cost_fns import CoulombCost, HistCost
@@ -110,18 +111,18 @@ if __name__ == '__main__':
             costs.Euclidean(),
             costs.Cosine(),
             CoulombCost(),
-            costs.ElasticL1(),
-            costs.ElasticL2(),
-            costs.ElasticSTVS(),
+            #costs.ElasticL1(),
+            #costs.ElasticL2(),
+            #costs.ElasticSTVS(),
         ],
         sinkhorn_matching_kwargs=dict(
             tau_a=1.0,
             tau_b=1.0,
         ),
         nbatches=50,
-        batch_size=256,
+        batch_size=B,
         summarize=True,
-        save_folder=os.path.join("compare_cost_fn", "celeba_ot_batch256"),
+        save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}"),
         overwrite=True,
         decodedX=celebaX, 
         decodedY=celebaY,
