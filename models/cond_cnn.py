@@ -278,7 +278,7 @@ if __name__ == "__main__":  # Debug area
         32,
         32,
     )
-    dim_channels = [input_channel_dim, 16, 32, 64, 128]
+    dim_channels = [input_channel_dim, 8, 16, 32, 64, 128]
     model = CNN(dim_channels, dropout_rate=0.4, key=key)
 
     # Test random input
@@ -301,11 +301,11 @@ if __name__ == "__main__":  # Debug area
     )
     print(random_input_film.shape)
     # Verify FiLM transformation (for varios points in same channel)
-    affine_transformed = film_layer(x=random_input_film * 0, c=output)
+    affine_transformed = film_layer(x=random_input_film * 0, cond=output)
     print(affine_transformed.shape)
     print(affine_transformed[0, :2, :2])
 
-    affine_transformed = film_layer(x=random_input_film * 0 + 1, c=output)
+    affine_transformed = film_layer(x=random_input_film * 0 + 1, cond=output)
     print(affine_transformed.shape)
     print(affine_transformed[0, :2, :2])
 

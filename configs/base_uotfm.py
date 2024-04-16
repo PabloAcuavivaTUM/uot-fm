@@ -16,5 +16,6 @@ def get_uotfm_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
     config.training.epsilon = 0.01
+    config.training.cond = False
 
     return config

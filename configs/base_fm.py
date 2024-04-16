@@ -16,5 +16,6 @@ def get_fm_config():
     config.training.tau_a = 0.0
     config.training.tau_b = 0.0
     config.training.epsilon = 0.0
+    config.training.cond = False
 
     return config

@@ -16,5 +16,6 @@ def get_otfm_config():
     config.training.tau_a = 1.0
     config.training.tau_b = 1.0
     config.training.epsilon = 0.01
+    config.training.cond = False
 
     return config
