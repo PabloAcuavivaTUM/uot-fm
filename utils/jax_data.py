@@ -6,8 +6,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from ott.geometry.pointcloud import PointCloud
+from ott.geometry.pointcloud import geometry, PointCloud
 from ott.solvers.linear import sinkhorn
+
 
 from .ot_cost_fns import cost_fns, create_cost_matrix
 
@@ -77,13 +78,13 @@ class BatchResampler:
                 )
             else:
                 cm = create_cost_matrix(
-                    X=source_batch,
-                    Y=source_batch,
-                    k_neighbors=30,
+                    X=jnp.reshape(source_batch, [self.batch_size, -1]),
+                    Y=jnp.reshape(target_batch, [self.batch_size, -1]),
+                    k_neighbors=128, # This should be an hyperparameter
                     cost_fn=cost_fns[self.cost_fn],
                     geometry=self.geometry,
                 )
-                geom = self.geometry.Geometry(
+                geom = geometry.Geometry(
                     cost_matrix=cm,
                     epsilon=self.epsilon,
                     scale_cost="mean",
