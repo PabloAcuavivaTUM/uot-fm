@@ -6,7 +6,7 @@ import jax.random as jr
 import ml_collections
 from diffusers import FlaxAutoencoderKL
 
-from models.cond_unet import CondUNet
+from models.cond_unet import CondUNetFiLM
 from models.mlpmixer import Mixer2d
 from models.unet import UNet
 
@@ -27,7 +27,7 @@ def get_model(
         )
     elif config.model.type == "unet":
         if config.training.cond:
-            return CondUNet(
+            return CondUNetFiLM(
                 data_shape,
                 is_biggan=config.model.biggan_sample,
                 dim_mults=config.model.dim_mults,

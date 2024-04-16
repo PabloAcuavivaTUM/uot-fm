@@ -14,5 +14,6 @@ def get_config():
     config.overfit_to_one_batch = True
     config.name = "test-ignore-emnist"
     config.wandb_group = "test"
+    config.training.num_steps = 500
 
     return config

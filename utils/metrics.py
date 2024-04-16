@@ -270,8 +270,8 @@ class MetricComputer:
         sigma_gen = np.atleast_1d(sigma_gen)
         sigma_real = np.atleast_1d(sigma_real)
 
-        assert mu_gen.shape == mu_real.shape
-        assert sigma_gen.shape == sigma_real.shape
+        assert mu_gen.shape == mu_real.shape, f"Shapes {mu_gen.shape} != {mu_real.shape}"
+        assert sigma_gen.shape == sigma_real.shape, f"Shapes {sigma_gen.shape} != {sigma_real.shape}"
 
         diff = mu_real - mu_gen
         covmean, _ = scipy.linalg.sqrtm(sigma_real.dot(sigma_gen), disp=False)

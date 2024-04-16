@@ -205,9 +205,13 @@ class FlowMatching:
         def single_sample_fn(model: eqx.Module, x0: jax.Array) -> jax.Array:
             """Produce single sample from the CNF by integrating forward."""
 
-            def func(t, x, args):
-                return model(t, x)
-
+            if self.cond:
+                def func(t, x, args, x0=x0):                    
+                        return model(t, x, x0)
+            else:
+                def func(t, x, args):
+                        return model(t, x)
+            # --- 
             term = dfx.ODETerm(func)
             if self.solver == "tsit5":
                 solver = dfx.Tsit5()
