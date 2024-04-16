@@ -577,9 +577,10 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
         c, h, w = x.shape
         x = self.group_norm(x)
         kv = self.to_kv(x)
-        q = self.to_q(cond)
+        q = self.to_q(cond) # C_q, H_q, W_q
 
         # Extract k,v,q in proper format
+        # ! q must be always for x, and k,v must be for context. Otherwise number of tokens do not match. 
         k, v = rearrange(
             kv,
             "(kv heads c) h w -> kv heads c (h w)",
@@ -592,6 +593,9 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
             "(heads c) h w -> heads c (h w)",
             heads=self.heads,
         )
+        
+        # Conv -> (128, 3,3)
+        # ConvNet -> 
         pass
 
         # Notice that in hour case that (h w), i.e height x witdh do not coincide for q and k,v
@@ -618,7 +622,7 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
         # # If context is undefined use x
         # context = default(context, x)
         # k = self.to_k(context)
-        # v = self.to_v(context)
+        # v = self.to_v(context)128
 
 
 if __name__ == "__main__":  # Debug area
