@@ -17,5 +17,6 @@ def get_config():
     config.training.ot_cost_fn = ot_cost_fn
     config.wandb_group = "costs_fns"
     config.training.ot_geometry = ot_geometry
+    config.ot_geometry_kwargs = dict(t=0.01)
 
     return config

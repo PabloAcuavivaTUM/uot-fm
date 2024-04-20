@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
+import logging 
 
 import dm_pix as pix
 import equinox as eqx
@@ -55,9 +56,11 @@ class BatchResampler:
     tau_b: float = 1.0
     epsilon: float = 1e-2
     cost_fn: str = "sqeuclidean"
-    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
+    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud"
+    t : float = 0.001
     
     def __post_init__(self):
+        logging.info(f'Value t={self.t} is being used')
         @eqx.filter_jit(donate="all")
         def _resample(
             key: jr.KeyArray,
@@ -83,6 +86,7 @@ class BatchResampler:
                     k_neighbors=128, # This should be an hyperparameter
                     cost_fn=cost_fns[self.cost_fn],
                     geometry=self.geometry,
+                    t=self.t,
                 )
                 geom = geometry.Geometry(
                     cost_matrix=cm,
