@@ -18,7 +18,10 @@ def get_config():
     config.wandb_group = "test"
     # config.training.num_steps = 10
     config.training.cond = True
-    
+
+    config.data.source = "celeba_fake"
+    config.data.target = "celeba_fake"
+
     # config.training.batch_size = 256
 
     return config

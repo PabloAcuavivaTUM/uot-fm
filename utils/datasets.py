@@ -153,14 +153,14 @@ def get_data(
             num_samples=config.eval.eval_samples,
         )
         eval_source_label, eval_target_label = None, None
-    elif config.data.target == "fake_celeba":
+    elif config.data.target == "celeba_fake":
         # Fake datata with same dimensions as celeba256 encoded for quick pipeline prototyping
         (
             train_source_data,
             train_target_data,
             train_source_label,
             train_target_label,
-        ) = fake_celeba(
+        ) = celeba_fake(
             "train",
             config.data.attribute_id,
             config.data.map_forward,
@@ -171,7 +171,7 @@ def get_data(
             eval_target_data,
             eval_source_label,
             eval_target_label,
-        ) = fake_celeba(
+        ) = celeba_fake(
             "test",
             config.data.attribute_id,
             config.data.map_forward,
@@ -235,7 +235,7 @@ def emnist(split: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     return source_data, target_data, one_hot_src_labels, one_hot_tgt_labels
 
 
-def fake_celeba(
+def celeba_fake(
     split: str,
     attribute_id: int,
     map_forward: bool,
