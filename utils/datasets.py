@@ -1,7 +1,7 @@
 import csv
 import logging
 import os
-from typing import Callable, List, Optional, Tuple, Optional
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import jax
@@ -32,7 +32,9 @@ def get_translation_datasets(
 
 
 def prepare_dataset(
-    data: np.ndarray, config: ConfigDict, evaluation: bool = False, 
+    data: np.ndarray,
+    config: ConfigDict,
+    evaluation: bool = False,
 ) -> tfds.as_numpy:
     """Prepare dataset given config."""
     dataset = tf.data.Dataset.from_tensor_slices(data)
@@ -151,6 +153,30 @@ def get_data(
             num_samples=config.eval.eval_samples,
         )
         eval_source_label, eval_target_label = None, None
+    elif config.data.target == "fake_celeba":
+        # Fake datata with same dimensions as celeba256 encoded for quick pipeline prototyping
+        (
+            train_source_data,
+            train_target_data,
+            train_source_label,
+            train_target_label,
+        ) = fake_celeba(
+            "train",
+            config.data.attribute_id,
+            config.data.map_forward,
+            config.training.batch_size,
+        )
+        (
+            eval_source_data,
+            eval_target_data,
+            eval_source_label,
+            eval_target_label,
+        ) = fake_celeba(
+            "test",
+            config.data.attribute_id,
+            config.data.map_forward,
+            config.training.batch_size,
+        )
     else:
         raise ValueError(f"Unknown target dataset {config.target_dataset}")
 
@@ -209,6 +235,62 @@ def emnist(split: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     return source_data, target_data, one_hot_src_labels, one_hot_tgt_labels
 
 
+def fake_celeba(
+    split: str,
+    attribute_id: int,
+    map_forward: bool,
+    batch_size: int,
+    subset_attribute_id: Optional[int] = None,
+):
+    data_dir = "./data/celeba"
+    with open(f"{data_dir}/list_attr_celeba.txt") as csv_file:
+        data = list(csv.reader(csv_file, delimiter=" ", skipinitialspace=True))
+        data = data[2:]
+        filenames = [row[0] for row in data]
+        data = [row[1:] for row in data]
+        label_int = np.array([list(map(int, i)) for i in data])
+
+    with open(f"{data_dir}/list_eval_partition.txt") as csv_file:
+        data = list(csv.reader(csv_file, delimiter=" ", skipinitialspace=True))
+        data = [row[1:] for row in data]
+        split_int = np.array([list(map(int, i)) for i in data])
+    if split == "train":
+        splits = 0
+    elif split == "test":
+        splits = [1, 2]
+    elif split == "full":
+        splits = [0, 1, 2]
+    split_indices = np.isin(split_int, splits).squeeze()
+    if map_forward:
+        source_indices = label_int[:, attribute_id] != 1
+        target_indices = label_int[:, attribute_id] == 1
+    else:
+        source_indices = label_int[:, attribute_id] == 1
+        target_indices = label_int[:, attribute_id] != 1
+    if subset_attribute_id is not None:
+        if subset_attribute_id == 201:
+            # subset for glasses
+            source_indices = source_indices * (label_int[:, 20] != 1)
+            target_indices = target_indices * (label_int[:, 20] != 1)
+        else:
+            source_indices = source_indices * (label_int[:, subset_attribute_id] == 1)
+            target_indices = target_indices * (label_int[:, subset_attribute_id] == 1)
+
+    source_indices = split_indices * source_indices
+    target_indices = split_indices * target_indices
+    source_labels = np.array(
+        [label for label, indice in zip(label_int, source_indices) if indice]
+    )
+    target_labels = np.array(
+        [label for label, indice in zip(label_int, target_indices) if indice]
+    )
+
+    target_data = np.random.rand(256, 32, 32, 4)
+    source_data = np.random.rand(256, 32, 32, 4)
+
+    return source_data, target_data, source_labels, target_labels
+
+
 def celeba_attribute(
     split: str,
     attribute_id: int,
@@ -219,7 +301,7 @@ def celeba_attribute(
     vae_encode_fn: Optional[Callable] = None,
     preprocess_fn: Optional[Callable] = None,
     subset_attribute_id: Optional[int] = None,
-    nsamples : Optional[int] = None, 
+    nsamples: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load celeba attribute data.
@@ -234,7 +316,7 @@ def celeba_attribute(
         vae_encode_fn: Vae encode function
         preprocess_fn: Preprocess function
         subset_attribute_id: Subset attribute id to split on (0-39)
-        nsamples: Indicates the number of samples to load. Default None, load all. 
+        nsamples: Indicates the number of samples to load. Default None, load all.
     """
 
     data_dir = "./data/celeba"
@@ -288,7 +370,7 @@ def celeba_attribute(
     target_labels = np.array(
         [label for label, indice in zip(label_int, target_indices) if indice]
     )
-    
+
     if nsamples is not None:
         source_filenames = source_filenames[:nsamples]
         source_labels = source_labels[:nsamples]
@@ -317,8 +399,7 @@ def celeba_attribute(
         target_data.append(image)
         if overfit_to_one_batch and len(target_data) == batch_size:
             break
-        
-        
+
     if vae_encode_fn is not None:
         logging.info("Precomputing VAE embedding.")
         batch_size = batch_size // 2
