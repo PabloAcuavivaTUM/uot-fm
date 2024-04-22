@@ -103,33 +103,31 @@ def single_cost_fn_metrics(
     metrics[f"sample"] = sim_sample
 
     # ! It only works for celeba, to make it quick we add it here, we should make it part of config
-    try:
-        # Attribute ids:
-        ids = dict(
-            id_male=20,
-            id_gray_hair=17,
-            id_bald=4,
-            id_young=39,
-            id_hat=35,
-            id_glasses=15,
+
+    # Attribute ids:
+    ids = dict(
+        id_male=20,
+        id_gray_hair=17,
+        id_bald=4,
+        id_young=39,
+        id_hat=35,
+        id_glasses=15,
+    )
+
+    def get_mask_celeba(id_mask: int):
+        mask = jnp.zeros(40).astype(bool)
+        mask = mask.at[id_mask].set(True)
+        return mask
+
+    for id_name, id_int in ids.items():
+        mask = get_mask_celeba(id_int)
+        sim_sample = similarity_top_k(
+            sample_labelX,
+            top_k_labels=sample_labelY[:, None, ...],
+            mask=mask,
         )
 
-        def get_mask_celeba(id_mask: int):
-            mask = jnp.zeros(40).astype(bool)
-            mask = mask.at[id_mask].set(True)
-            return mask
-
-        for id_name, id_int in ids.items():
-            mask = get_mask_celeba(id_int)
-            sim_sample = similarity_top_k(
-                sample_labelX,
-                top_k_labels=sample_labelY[:, None, ...],
-                mask=mask,
-            )
-
-            metrics[f"sample_{id_name}"] = sim_sample
-    except:
-        pass
+        metrics[f"sample_{id_name}"] = sim_sample
 
     return metrics
 
