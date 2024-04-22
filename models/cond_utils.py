@@ -1,13 +1,21 @@
+import math
 import os
 from typing import Callable, Optional, Union
+
+# isort: skip_file
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1" # Deactivate GPU JaX in local
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from einops import rearrange
 import jax.random as jr
+from einops import rearrange
 
-import math
+
+
+
+
+
 
 
 def key_split_allowing_none(key):
@@ -548,12 +556,13 @@ class SimpleCNN(eqx.Module):
             h = h.ravel()
         return h
 
-class ConditionalLinearTimeSelfAttention(eqx.Module):
-    """Conditional Linear Self Attention Block."""
+class LinearTimeCrossAttention(eqx.Module):
+    """Conditional Linear Cross Attention Block."""
 
     group_norm: eqx.nn.GroupNorm
     heads: int
-    to_qkv: eqx.nn.Conv2d
+    to_kv: eqx.nn.Conv2d
+    to_q : eqx.nn.Conv2d
     to_out: eqx.nn.Conv2d
 
     def __init__(
@@ -576,11 +585,9 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
     def __call__(self, x, cond):
         c, h, w = x.shape
         x = self.group_norm(x)
-        kv = self.to_kv(x)
-        q = self.to_q(cond) # C_q, H_q, W_q
+        kv = self.to_kv(cond)
+        q = self.to_q(x) # C_q, H_q, W_q
 
-        # Extract k,v,q in proper format
-        # ! q must be always for x, and k,v must be for context. Otherwise number of tokens do not match. 
         k, v = rearrange(
             kv,
             "(kv heads c) h w -> kv heads c (h w)",
@@ -594,10 +601,12 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
             heads=self.heads,
         )
         
-        # Conv -> (128, 3,3)
-        # ConvNet -> 
-        pass
+        k = jax.nn.softmax(k, axis=-1)
+        context = jnp.einsum("hdn,hen->hde", k, v)
+        out = jnp.einsum("hde,hdn->hen", context, q)
 
+        return out 
+    
         # Notice that in hour case that (h w), i.e height x witdh do not coincide for q and k,v
         # as one is the conditioning (q)
 
@@ -626,7 +635,9 @@ class ConditionalLinearTimeSelfAttention(eqx.Module):
 
 
 if __name__ == "__main__":  # Debug area
-
+    test_film = False
+    test_crossattn = True 
+    # ---
     key = jax.random.key(0)
 
     input_channel_dim = 4
@@ -634,39 +645,58 @@ if __name__ == "__main__":  # Debug area
         32,
         32,
     )
-    dim_channels = [input_channel_dim, 8, 16, 32, 64, 128]
-    model = SimpleCNN(dim_channels, dropout_rate=0.4, key=key)
-
     # Test random input
     key, subkey = jax.random.split(key)
     random_input = jax.random.normal(subkey, shape=(input_channel_dim, H, W))
-    print(random_input.shape)
-    key, subkey = jax.random.split(key)
-    output = model(random_input, key=subkey)
-    print(output.shape)
+    
+    
+    if test_film:
+        print('Testing FiLM')
+        dim_channels = [input_channel_dim, 8, 16, 32, 64, 128]
+        key, subkey = jax.random.split(key)
+        model = SimpleCNN(dim_channels, dropout_rate=0.4, key=subkey)
 
-    channel_features = 10
-    key, subkey = jax.random.split(key)
-    random_input_film = jax.random.normal(subkey, shape=(channel_features, 20, 20))
-    key, subkey = jax.random.split(key)
+        print(random_input.shape)
+        key, subkey = jax.random.split(key)
+        output = model(random_input, key=subkey)
+        print(output.shape)
 
-    film_layer = FiLM(
-        conditional_dim=128,
-        channel_features=channel_features,
-        key=subkey,
-    )
-    print(random_input_film.shape)
-    # Verify FiLM transformation (for varios points in same channel)
-    affine_transformed = film_layer(x=random_input_film * 0, cond=output)
-    print(affine_transformed.shape)
-    print(affine_transformed[0, :2, :2])
+        channel_features = 10
+        key, subkey = jax.random.split(key)
+        random_input_film = jax.random.normal(subkey, shape=(channel_features, 20, 20))
+        key, subkey = jax.random.split(key)
 
-    affine_transformed = film_layer(x=random_input_film * 0 + 1, cond=output)
-    print(affine_transformed.shape)
-    print(affine_transformed[0, :2, :2])
+        film_layer = FiLM(
+            conditional_dim=128,
+            channel_features=channel_features,
+            key=subkey,
+        )
+        print(random_input_film.shape)
+        # Verify FiLM transformation (for varios points in same channel)
+        affine_transformed = film_layer(x=random_input_film * 0, cond=output)
+        print(affine_transformed.shape)
+        print(affine_transformed[0, :2, :2])
 
-    # Conditioning
-    # (128,) --> (64,*?)
-    # ----
-    #                       TOKEN DIM | TOKEN
-    # In shape (64, 30, 30) -> (64, 900)
+        affine_transformed = film_layer(x=random_input_film * 0 + 1, cond=output)
+        print(affine_transformed.shape)
+        print(affine_transformed[0, :2, :2])
+    if test_crossattn:
+        print('Testing CrossAttn')
+        # Test random input
+        key, subkey = jax.random.split(key)
+        random_cond = jax.random.normal(subkey, shape=(input_channel_dim, H, W))
+        
+        dim_channels = [input_channel_dim, 32, 64, 128]
+        
+        key, subkey = jax.random.split(key)
+        model = SimpleCNN(dim_channels, dropout_rate=0.4, key=subkey)
+        print(random_cond.shape)
+        
+        key, subkey = jax.random.split(key)
+        cond = model(random_cond, key=subkey)
+        print(cond.shape)
+        
+        key, subkey = jax.random.split(key)
+        cross_attn = LinearTimeCrossAttention(dim=128, key=subkey, heads=4, dim_head=32, )
+        output = cross_attn(random_input, cond)
+        print(f'Random Input: {random_input.shape} | CrossAttention Output: {output.shape}')

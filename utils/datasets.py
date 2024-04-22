@@ -187,6 +187,8 @@ def get_data(
         pass
     elif config.data.source == "emnist":
         pass
+    elif config.data.source == "celeba_fake":
+        pass 
     else:
         raise ValueError(f"Unknown source dataset {config.data.source}")
 
@@ -285,10 +287,11 @@ def celeba_fake(
         [label for label, indice in zip(label_int, target_indices) if indice]
     )
 
-    target_data = np.random.rand(256, 32, 32, 4)
-    source_data = np.random.rand(256, 32, 32, 4)
-
-    return source_data, target_data, source_labels, target_labels
+    N = 512
+    target_data = np.random.rand(N, 4, 32, 32)
+    source_data = np.random.rand(N, 4, 32, 32)
+    
+    return source_data, target_data, source_labels[:N], target_labels[:N]
 
 
 def celeba_attribute(

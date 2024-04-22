@@ -27,6 +27,7 @@ def get_model(
         )
     elif config.model.type == "unet":
         if config.training.cond:
+            print('Creating conditional UNET Model')
             return CondUNetFiLM(
                 data_shape,
                 is_biggan=config.model.biggan_sample,
