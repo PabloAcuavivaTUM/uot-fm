@@ -12,17 +12,12 @@ import jax.random as jr
 from einops import rearrange
 
 
-
-
-
-
-
-
 def key_split_allowing_none(key):
     if key is None:
         return key, None
     else:
         return jax.random.split(key)
+
 
 class SinusoidalPosEmb(eqx.Module):
     emb: jax.Array
@@ -36,6 +31,7 @@ class SinusoidalPosEmb(eqx.Module):
         emb = x * self.emb
         emb = jnp.concatenate((jnp.sin(emb), jnp.cos(emb)), axis=-1)
         return emb
+
 
 class LinearTimeSelfAttention(eqx.Module):
     group_norm: eqx.nn.GroupNorm
@@ -59,18 +55,27 @@ class LinearTimeSelfAttention(eqx.Module):
 
     def __call__(self, x):
         c, h, w = x.shape
+        print(f"X: {x.shape}")
         x = self.group_norm(x)
         qkv = self.to_qkv(x)
         q, k, v = rearrange(
             qkv, "(qkv heads c) h w -> qkv heads c (h w)", heads=self.heads, qkv=3
         )
+        print(f"K: {k.shape} | V: {k.shape}")
+        print(f"Q: {q.shape}")
+
         k = jax.nn.softmax(k, axis=-1)
+        print(f"K-softmax: {k.shape}")
         context = jnp.einsum("hdn,hen->hde", k, v)
+        print(f"Context: {context.shape}")
         out = jnp.einsum("hde,hdn->hen", context, q)
+        print(f"out: {out.shape}")
         out = rearrange(
             out, "heads c (h w) -> (heads c) h w", heads=self.heads, h=h, w=w
         )
+        print(f"out rearranged: {out.shape}")
         return self.to_out(out)
+
 
 class FiLM(eqx.Module):
     """Feature-wise linear modulation"""
@@ -93,16 +98,19 @@ class FiLM(eqx.Module):
 
         return (1 + gamma) * x + beta
 
+
 def upsample_2d(y, factor=2):
     C, H, W = y.shape
     y = jnp.reshape(y, [C, H, 1, W, 1])
     y = jnp.tile(y, [1, 1, factor, 1, factor])
     return jnp.reshape(y, [C, H * factor, W * factor])
 
+
 def downsample_2d(y, factor=2):
     C, H, W = y.shape
     y = jnp.reshape(y, [C, H // factor, factor, W // factor, factor])
     return jnp.mean(y, axis=[2, 4])
+
 
 def exact_zip(*args):
     _len = len(args[0])
@@ -110,11 +118,13 @@ def exact_zip(*args):
         assert len(arg) == _len
     return zip(*args)
 
+
 def key_split_allowing_none(key):
     if key is None:
         return key, None
     else:
         return jr.split(key)
+
 
 class Residual(eqx.Module):
     fn: LinearTimeSelfAttention
@@ -124,6 +134,7 @@ class Residual(eqx.Module):
 
     def __call__(self, x, *args, **kwargs):
         return self.fn(x, *args, **kwargs) + x
+
 
 class ResnetBlock(eqx.Module):
     dim_out: int
@@ -256,6 +267,7 @@ class ResnetBlock(eqx.Module):
             out = self.attn(out)
         return out
 
+
 class SimpleResnetBlock(eqx.Module):
     dim_out: int
     up: bool
@@ -376,6 +388,7 @@ class SimpleResnetBlock(eqx.Module):
 
         return out
 
+
 class FiLMResnetBlock(eqx.Module):
     dim_out: int
     is_biggan: bool
@@ -392,9 +405,8 @@ class FiLMResnetBlock(eqx.Module):
     ]
     res_conv: eqx.nn.Conv2d
     attn: Optional[Residual]
-    conditional_film_dim : int 
-    film : FiLM
-    
+    conditional_film_dim: int
+    film: FiLM
 
     def __init__(
         self,
@@ -408,7 +420,7 @@ class FiLMResnetBlock(eqx.Module):
         is_attn,
         heads,
         dim_head,
-        conditional_film_dim, 
+        conditional_film_dim,
         *,
         key,
     ):
@@ -425,13 +437,13 @@ class FiLMResnetBlock(eqx.Module):
             eqx.nn.Linear(time_emb_dim, dim_out, key=keys[0]),
         ]
         self.block1_groupnorm = eqx.nn.GroupNorm(min(dim_in // 4, 32), dim_in)
-        
-        self.conditional_film_dim = conditional_film_dim 
+
+        self.conditional_film_dim = conditional_film_dim
         self.film = FiLM(
-          conditional_dim=self.conditional_film_dim,
-           channel_features=dim_in,
-           key=keys[1],
-        ) 
+            conditional_dim=self.conditional_film_dim,
+            channel_features=dim_in,
+            key=keys[1],
+        )
 
         self.block1_conv = eqx.nn.Conv2d(dim_in, dim_out, 3, padding=1, key=keys[2])
         self.block2_layers = [
@@ -499,7 +511,6 @@ class FiLMResnetBlock(eqx.Module):
             h = self.scaling(h)  # pyright: ignore
             x = self.scaling(x)  # pyright: ignore
         h = self.block1_conv(h)
-        
 
         for layer in self.mlp_layers:
             t = layer(t)
@@ -518,6 +529,7 @@ class FiLMResnetBlock(eqx.Module):
         if self.attn is not None:
             out = self.attn(out)
         return out
+
 
 class SimpleCNN(eqx.Module):
     res_blocks: list[SimpleResnetBlock]
@@ -556,37 +568,39 @@ class SimpleCNN(eqx.Module):
             h = h.ravel()
         return h
 
+
 class LinearTimeCrossAttention(eqx.Module):
     """Conditional Linear Cross Attention Block."""
 
     group_norm: eqx.nn.GroupNorm
     heads: int
     to_kv: eqx.nn.Conv2d
-    to_q : eqx.nn.Conv2d
+    to_q: eqx.nn.Conv2d
     to_out: eqx.nn.Conv2d
 
     def __init__(
         self,
-        dim,
+        input_dim,
+        cond_dim,
         key,
         heads=4,
         dim_head=32,
     ):
         keys = jax.random.split(key, 3)
-        self.group_norm = eqx.nn.GroupNorm(min(dim // 4, 32), dim)
+        self.group_norm = eqx.nn.GroupNorm(min(input_dim // 4, 32), input_dim)
         self.heads = heads
         hidden_dim = dim_head * heads
 
-        self.to_kv = eqx.nn.Conv2d(dim, hidden_dim * 2, 1, key=keys[0])
-        self.to_q = eqx.nn.Conv2d(dim, hidden_dim, 1, key=keys[1])
+        self.to_kv = eqx.nn.Conv2d(cond_dim, hidden_dim * 2, 1, key=keys[0])
+        self.to_q = eqx.nn.Conv2d(input_dim, hidden_dim, 1, key=keys[1])
 
-        self.to_out = eqx.nn.Conv2d(hidden_dim, dim, 1, key=keys[2])
+        self.to_out = eqx.nn.Conv2d(hidden_dim, input_dim, 1, key=keys[2])
 
-    def __call__(self, x, cond):
+    def __call__(self, x, cond, key=None):
         c, h, w = x.shape
         x = self.group_norm(x)
         kv = self.to_kv(cond)
-        q = self.to_q(x) # C_q, H_q, W_q
+        q = self.to_q(x)  # C_q, H_q, W_q
 
         k, v = rearrange(
             kv,
@@ -600,13 +614,17 @@ class LinearTimeCrossAttention(eqx.Module):
             "(heads c) h w -> heads c (h w)",
             heads=self.heads,
         )
-        
+
         k = jax.nn.softmax(k, axis=-1)
         context = jnp.einsum("hdn,hen->hde", k, v)
-        out = jnp.einsum("hde,hdn->hen", context, q)
 
-        return out 
-    
+        out = jnp.einsum("hde,hdn->hen", context, q)
+        out = rearrange(
+            out, "heads c (h w) -> (heads c) h w", heads=self.heads, h=h, w=w
+        )
+
+        return self.to_out(out)
+
         # Notice that in hour case that (h w), i.e height x witdh do not coincide for q and k,v
         # as one is the conditioning (q)
 
@@ -636,7 +654,7 @@ class LinearTimeCrossAttention(eqx.Module):
 
 if __name__ == "__main__":  # Debug area
     test_film = False
-    test_crossattn = True 
+    test_crossattn = True
     # ---
     key = jax.random.key(0)
 
@@ -645,13 +663,12 @@ if __name__ == "__main__":  # Debug area
         32,
         32,
     )
-    # Test random input
-    key, subkey = jax.random.split(key)
-    random_input = jax.random.normal(subkey, shape=(input_channel_dim, H, W))
-    
-    
+
     if test_film:
-        print('Testing FiLM')
+        print("Testing FiLM")
+        # Test random input
+        key, subkey = jax.random.split(key)
+        random_input = jax.random.normal(subkey, shape=(input_channel_dim, H, W))
         dim_channels = [input_channel_dim, 8, 16, 32, 64, 128]
         key, subkey = jax.random.split(key)
         model = SimpleCNN(dim_channels, dropout_rate=0.4, key=subkey)
@@ -681,22 +698,37 @@ if __name__ == "__main__":  # Debug area
         print(affine_transformed.shape)
         print(affine_transformed[0, :2, :2])
     if test_crossattn:
-        print('Testing CrossAttn')
+        print("Testing CrossAttn")
         # Test random input
         key, subkey = jax.random.split(key)
         random_cond = jax.random.normal(subkey, shape=(input_channel_dim, H, W))
-        
+
         dim_channels = [input_channel_dim, 32, 64, 128]
-        
+
         key, subkey = jax.random.split(key)
         model = SimpleCNN(dim_channels, dropout_rate=0.4, key=subkey)
         print(random_cond.shape)
-        
+
         key, subkey = jax.random.split(key)
         cond = model(random_cond, key=subkey)
         print(cond.shape)
-        
+
+        # Test random input
+        input_dim = 32
         key, subkey = jax.random.split(key)
-        cross_attn = LinearTimeCrossAttention(dim=128, key=subkey, heads=4, dim_head=32, )
-        output = cross_attn(random_input, cond)
-        print(f'Random Input: {random_input.shape} | CrossAttention Output: {output.shape}')
+        random_input = jax.random.normal(subkey, shape=(input_dim, H, W))
+
+        print("CrossAttentionLayer")
+        key, subkey = jax.random.split(key)
+        cross_attn = LinearTimeCrossAttention(
+            input_dim=input_dim,
+            cond_dim=dim_channels[-1],
+            key=subkey,
+            heads=4,
+            dim_head=32,
+        )
+        key, subkey = jax.random.split(key)
+        output = cross_attn(random_input, cond, key=subkey)
+        print(
+            f"Random Input: {random_input.shape} | CrossAttention Output: {output.shape}"
+        )
