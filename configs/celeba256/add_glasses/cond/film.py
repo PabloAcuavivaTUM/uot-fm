@@ -16,12 +16,6 @@ def get_config():
     # config.overfit_to_one_batch = True
     config.name = "celeba256-add-glasses-FiLM"
     config.wandb_group = "cond"
-    # config.training.num_steps = 10
     config.training.cond = True
-    
-    # Remove vae & Make fast load with fake data 
-    # config.model.use_vae = False 
-    # config.data.source = "celeba_fake"
-    # config.data.target = "celeba_fake"
 
     return config
