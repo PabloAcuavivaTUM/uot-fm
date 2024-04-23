@@ -451,7 +451,7 @@ def explore_cost_fn(
                 Nsamples = sampleX.shape[0]
                 nrow = floor(jnp.sqrt(Nsamples))
                 ncol = 2 * nrow
-                if nrow <= 0:
+                if nrow <= 1:
                     continue
                 fig, ax = sample_plot(
                     X=sampleX,
