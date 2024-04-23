@@ -95,7 +95,7 @@ if __name__ == "__main__":
     celeba_labelX[celeba_labelX == -1] = 0
     celeba_labelY[celeba_labelY == -1] = 0
 
-    B = 256  # 512
+    B = 512  # 512
     import ott.geometry.costs as costs
 
     from utils.costs_fn_metrics import explore_cost_fn
