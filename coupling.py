@@ -1,18 +1,18 @@
 import os
-#os.environ["CUDA_VISIBLE_DEVICES"] = "-1" # Deactivate GPU JaX in local
+from typing import Callable, Tuple
 
-from utils.datasets import celeba_attribute
-import matplotlib.pyplot as plt
-
-import tensorflow as tf
-import numpy as np
-
-from typing import Tuple, Callable
 import jax
 import jax.experimental.mesh_utils as mesh_utils
-import jax.sharding as sharding
-from diffusers import FlaxAutoencoderKL
 import jax.numpy as jnp
+import jax.sharding as sharding
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from diffusers import FlaxAutoencoderKL
+
+from utils.datasets import celeba_attribute
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Deactivate GPU JaX in local
 
 
 def central_crop(image: tf.Tensor, size: int) -> tf.Tensor:
@@ -20,6 +20,7 @@ def central_crop(image: tf.Tensor, size: int) -> tf.Tensor:
     top = (image.shape[0] - size) // 2
     left = (image.shape[1] - size) // 2
     return tf.image.crop_to_bounding_box(image, top, left, size, size)
+
 
 def process_ds(x: np.ndarray) -> tf.Tensor:
     x = tf.cast(x, tf.float32) / 127.5 - 1.0
@@ -56,23 +57,23 @@ def get_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
     return encode_fn, decode_fn
 
 
+if __name__ == "__main__":
 
-if __name__ == '__main__':
-    # Load normal dataset 
+    # Load normal dataset
     N = 25_000
     celebaX, celebaY, _, _ = celeba_attribute(
-        split='train',
+        split="train",
         attribute_id=15,
         map_forward=True,
         batch_size=256,
-        overfit_to_one_batch = False,
-        nsamples = N,
+        overfit_to_one_batch=False,
+        nsamples=N,
     )
 
     # We need to transpose to get it into correct format for plotting (as explore internally transposes to get them all into the format)
     celebaX = celebaX.transpose(0, 3, 1, 2)
     celebaY = celebaY.transpose(0, 3, 1, 2)
-    
+
     num_devices = len(jax.devices())
     # shard needs to have same number of dimensions as the input
     devices = mesh_utils.create_device_mesh((num_devices, 1, 1, 1))
@@ -81,22 +82,23 @@ if __name__ == '__main__':
 
     # Load embedded dataset
     celeba_embX, celeba_embY, celeba_labelX, celeba_labelY = celeba_attribute(
-        split='train',
+        split="train",
         attribute_id=15,
         map_forward=True,
         batch_size=256,
-        overfit_to_one_batch = False,
-        nsamples = N,
-        vae_encode_fn = vae_encode_fn,
-        preprocess_fn = process_ds,
+        overfit_to_one_batch=False,
+        nsamples=N,
+        vae_encode_fn=vae_encode_fn,
+        preprocess_fn=process_ds,
     )
 
     celeba_labelX[celeba_labelX == -1] = 0
     celeba_labelY[celeba_labelY == -1] = 0
-    
-    B = 256 #512
-    from utils.costs_fn_metrics import explore_cost_fn
+
+    B = 256  # 512
     import ott.geometry.costs as costs
+
+    from utils.costs_fn_metrics import explore_cost_fn
     from utils.ot_cost_fns import CoulombCost, HistCost
 
     metrics, comparison_metrics = explore_cost_fn(
@@ -111,9 +113,9 @@ if __name__ == '__main__':
             costs.Euclidean(),
             costs.Cosine(),
             CoulombCost(),
-            #costs.ElasticL1(),
-            #costs.ElasticL2(),
-            #costs.ElasticSTVS(),
+            # costs.ElasticL1(),
+            # costs.ElasticL2(),
+            # costs.ElasticSTVS(),
         ],
         sinkhorn_matching_kwargs=dict(
             tau_a=1.0,
@@ -122,8 +124,75 @@ if __name__ == '__main__':
         nbatches=50,
         batch_size=B,
         summarize=True,
-        save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}"),
+        save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}_byids"),
         overwrite=True,
-        decodedX=celebaX, 
+        decodedX=celebaX,
         decodedY=celebaY,
     )
+
+    if False:
+        import ott.geometry.costs as costs
+        import tensorflow as tf
+
+        [x_train_cifar, y_train_cifar], [x_test_cifar, y_test_cifar] = (
+            tf.keras.datasets.cifar10.load_data()
+        )
+
+        cifar_label = np.array(
+            [
+                "airplane",
+                "automobile",
+                "bird",
+                "cat",
+                "deer",
+                "dog",
+                "frog",
+                "horse",
+                "ship",
+                "truck",
+            ]
+        )
+
+        def one_hot_encode(labels: np.ndarray, num_classes: int):
+            num_samples = labels.shape[0]
+            encoded_labels = np.zeros((num_samples, num_classes), dtype=int)
+            encoded_labels[np.arange(num_samples), labels.flatten()] = 1
+            return encoded_labels
+
+        cifar_label = np.array(
+            [
+                "airplane",
+                "automobile",
+                "bird",
+                "cat",
+                "deer",
+                "dog",
+                "frog",
+                "horse",
+                "ship",
+                "truck",
+            ]
+        )
+
+        def one_hot_encode(labels: np.ndarray, num_classes: int):
+            num_samples = labels.shape[0]
+            encoded_labels = np.zeros((num_samples, num_classes), dtype=int)
+            encoded_labels[np.arange(num_samples), labels.flatten()] = 1
+            return encoded_labels
+
+        metrics, comparison_metrics = explore_cost_fn(
+            X=np.transpose(x_train_cifar, (0, 3, 1, 2)),
+            labelX=one_hot_encode(y_train_cifar, 10),
+            cost_fn=[
+                costs.SqEuclidean(),  # , costs.Euclidean(), costs.Cosine(),
+            ],
+            sinkhorn_matching_kwargs=dict(
+                tau_a=1.0,
+                tau_b=1.0,
+            ),
+            nbatches=1,
+            batch_size=256,
+            summarize=True,
+            save_folder=os.path.join("compare_cost_fn", "cifar_ot_test"),
+            overwrite=True,
+        )
