@@ -101,12 +101,7 @@ if __name__ == "__main__":
     from utils.costs_fn_metrics import explore_cost_fn
     from utils.ot_cost_fns import CoulombCost, HistCost
 
-    metrics, comparison_metrics = explore_cost_fn(
-        X=celeba_embX,
-        labelX=celeba_labelX,
-        Y=celeba_embY,
-        labelY=celeba_labelY,
-        cost_fn=[
+    cost_fns = [
             costs.SqEuclidean(),
             HistCost(),
             costs.PNormP(p=1),
@@ -116,19 +111,26 @@ if __name__ == "__main__":
             # costs.ElasticL1(),
             # costs.ElasticL2(),
             # costs.ElasticSTVS(),
-        ],
-        sinkhorn_matching_kwargs=dict(
-            tau_a=1.0,
-            tau_b=1.0,
-        ),
-        nbatches=50,
-        batch_size=B,
-        summarize=True,
-        save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}_byids"),
-        overwrite=True,
-        decodedX=celebaX,
-        decodedY=celebaY,
-    )
+        ]
+    for cost_fn in cost_fns:
+        metrics, comparison_metrics = explore_cost_fn(
+            X=celeba_embX,
+            labelX=celeba_labelX,
+            Y=celeba_embY,
+            labelY=celeba_labelY,
+            cost_fn=[cost_fn],
+            sinkhorn_matching_kwargs=dict(
+                tau_a=1.0,
+                tau_b=1.0,
+            ),
+            nbatches=50,
+            batch_size=B,
+            summarize=True,
+            save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}_byids_ind"),
+            overwrite=True,
+            decodedX=celebaX,
+            decodedY=celebaY,
+        )
 
     if False:
         import ott.geometry.costs as costs
