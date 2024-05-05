@@ -6,7 +6,7 @@ import jax.random as jr
 import ml_collections
 from diffusers import FlaxAutoencoderKL
 
-from models.cond_unet import CondUNetFiLM
+from models.cond_unet import CondUNetFiLM, CondUNetCrossAttention
 from models.mlpmixer import Mixer2d
 from models.unet import UNet
 
@@ -27,19 +27,34 @@ def get_model(
         )
     elif config.model.type == "unet":
         if config.training.cond:
-            print('Creating conditional UNET Model')
-            return CondUNetFiLM(
-                data_shape,
-                is_biggan=config.model.biggan_sample,
-                dim_mults=config.model.dim_mults,
-                hidden_size=config.model.hidden_size,
-                heads=config.model.heads,
-                dim_head=config.model.dim_head,
-                dropout_rate=config.model.dropout,
-                num_res_blocks=config.model.num_res_blocks,
-                attn_resolutions=config.model.attention_resolution,
-                key=model_key,
-            )
+            if config.training.cond_method == 'film':
+                return CondUNetFiLM(
+                    data_shape,
+                    is_biggan=config.model.biggan_sample,
+                    dim_mults=config.model.dim_mults,
+                    hidden_size=config.model.hidden_size,
+                    heads=config.model.heads,
+                    dim_head=config.model.dim_head,
+                    dropout_rate=config.model.dropout,
+                    num_res_blocks=config.model.num_res_blocks,
+                    attn_resolutions=config.model.attention_resolution,
+                    key=model_key,
+                )
+            elif config.training.cond_method == "attention":
+                return CondUNetCrossAttention(
+                    data_shape,
+                    is_biggan=config.model.biggan_sample,
+                    dim_mults=config.model.dim_mults,
+                    hidden_size=config.model.hidden_size,
+                    heads=config.model.heads,
+                    dim_head=config.model.dim_head,
+                    dropout_rate=config.model.dropout,
+                    num_res_blocks=config.model.num_res_blocks,
+                    attn_resolutions=config.model.attention_resolution,
+                    key=model_key,
+                )
+            else:
+                raise ValueError(f"Unknown conditioning method {config.training.cond_method}.")
         else:
             return UNet(
                 data_shape,
