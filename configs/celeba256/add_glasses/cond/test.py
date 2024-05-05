@@ -16,7 +16,7 @@ def get_config():
     # config.overfit_to_one_batch = True
     config.name = "celeba256-add-glasses-test"
     config.wandb_group = "cond"
-    config.training.num_steps = 500
+    config.training.num_steps = 10
     config.training.cond = True
 
     # Remove vae & Make fast load with fake data
@@ -24,6 +24,9 @@ def get_config():
     config.data.source = "celeba_fake"
     config.data.target = "celeba_fake"
 
-    # config.training.batch_size = 256
-
+    # Make network smaller to fit into one GPU
+    config.model.hidden_size = 16
+    config.model.dim_mults = [1,1,1]
+    config.model.num_res_blocks = 2
+    
     return config

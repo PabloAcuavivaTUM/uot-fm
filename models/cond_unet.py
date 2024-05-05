@@ -250,8 +250,6 @@ class CondUNetFiLM(eqx.Module):
         ]
 
     def __call__(self, t, x_t, x0, *, key=None):
-        print('Calling inference in conditional unet')
-        print(f'x_t: {x_t.shape}, x0: {x0.shape}')
         t = self.time_pos_emb(t)
         t = self.mlp(t)
         h = self.first_conv(x_t)
@@ -259,26 +257,19 @@ class CondUNetFiLM(eqx.Module):
         key, subkey = key_split_allowing_none(key)
         cond = self.cond_cnn(x0, key=subkey)
         
-        print(f'h: {h.shape}, cond: {cond.shape}')
-        
         for res_blocks in self.down_res_blocks:
             for res_block in res_blocks:
                 key, subkey = key_split_allowing_none(key)
                 h = res_block(h, t, cond=cond, key=subkey)
-                print('Calling resblock down')
-                print(f'h: {h.shape}')
                 hs.append(h)
                 
         
 
         key, subkey = key_split_allowing_none(key)
         h = self.mid_block1(h, t, cond=cond, key=subkey,)
-        print('Calling resblock mid')
-        print(f'h: {h.shape}')
         key, subkey = key_split_allowing_none(key)
         h = self.mid_block2(h, t, cond=cond, key=subkey,)
-        print('Calling resblock mid')
-        print(f'h: {h.shape}')
+        
 
         for res_blocks in self.ups_res_blocks:
             for res_block in res_blocks:
@@ -287,8 +278,7 @@ class CondUNetFiLM(eqx.Module):
                     h = res_block(h, t, cond=cond, key=subkey)
                 else:
                     h = res_block(jnp.concatenate((h, hs.pop()), axis=0), t, cond=cond, key=subkey)
-                print('Calling resblock up')
-                print(f'h: {h.shape}')
+               
 
         assert len(hs) == 0
 

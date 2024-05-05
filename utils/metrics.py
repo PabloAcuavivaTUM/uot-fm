@@ -138,6 +138,7 @@ class MetricComputer:
                     inputs = jnp.concatenate([inputs, src_batch[: int(2400 - inputs.shape[0])] * 0.5 + 0.5])
             # sample from model
             sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch)
+            
             nfes.append(nfe)
             if self.enable_path_lengths:
                 # compute euclidean distance between samples and inputs

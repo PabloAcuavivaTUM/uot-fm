@@ -287,9 +287,11 @@ def celeba_fake(
         [label for label, indice in zip(label_int, target_indices) if indice]
     )
 
-    N = 512
-    target_data = np.random.rand(N, 4, 32, 32)
-    source_data = np.random.rand(N, 4, 32, 32)
+    N = min(512*16, source_labels.shape[0], target_labels.shape[0])
+    target_data = jnp.abs(np.random.rand(N, 4, 32, 32))
+    source_data = jnp.abs(np.random.rand(N, 4, 32, 32))
+    
+    
     
     return source_data, target_data, source_labels[:N], target_labels[:N]
 

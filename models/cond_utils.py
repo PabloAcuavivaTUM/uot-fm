@@ -55,25 +55,19 @@ class LinearTimeSelfAttention(eqx.Module):
 
     def __call__(self, x):
         c, h, w = x.shape
-        print(f"X: {x.shape}")
+
         x = self.group_norm(x)
         qkv = self.to_qkv(x)
         q, k, v = rearrange(
             qkv, "(qkv heads c) h w -> qkv heads c (h w)", heads=self.heads, qkv=3
         )
-        print(f"K: {k.shape} | V: {k.shape}")
-        print(f"Q: {q.shape}")
 
         k = jax.nn.softmax(k, axis=-1)
-        print(f"K-softmax: {k.shape}")
         context = jnp.einsum("hdn,hen->hde", k, v)
-        print(f"Context: {context.shape}")
         out = jnp.einsum("hde,hdn->hen", context, q)
-        print(f"out: {out.shape}")
         out = rearrange(
             out, "heads c (h w) -> (heads c) h w", heads=self.heads, h=h, w=w
         )
-        print(f"out rearranged: {out.shape}")
         return self.to_out(out)
 
 
