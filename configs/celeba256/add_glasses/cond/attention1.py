@@ -14,9 +14,12 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = "celeba256-add-glasses-FiLM"
+    config.name = "celeba256-add-glasses-Attention1"
     config.wandb_group = "cond"
     config.training.cond = True
-    config.training.cond_method = 'film'
+    config.training.cond_method = 'attention'
+    
+    # Make every possible resolutiona attention
+    config.model.attention_resolution = list(range(0,1024))
 
     return config
