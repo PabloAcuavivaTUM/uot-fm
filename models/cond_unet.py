@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from einops import rearrange
 # models.cond_utils
-from cond_utils import (
+from models.cond_utils import (
     FiLMResnetBlock,
     CrossAttentionResnetBlock,
     SimpleCNN,
