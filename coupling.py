@@ -151,6 +151,7 @@ if __name__ == "__main__":
     from utils.costs_fn_metrics import explore_cost_fn
     from utils.ot_cost_fns import CoulombCost, HistCost
 
+    B = 256
     metrics, comparison_metrics = explore_cost_fn(
         X=celeba_embX,
         labelX=celeba_labelX,
@@ -172,9 +173,9 @@ if __name__ == "__main__":
             tau_b=1.0,
         ),
         nbatches=50,
-        batch_size=256,
+        batch_size=B,
         summarize=True,
-        save_folder=os.path.join("compare_cost_fn", "celeba_ot_batch256"),
+        save_folder=os.path.join("compare_cost_fn", f"celeba_ot_batch{B}_CLIP"),
         overwrite=True,
         decodedX=celebaX,
         decodedY=celebaY,
