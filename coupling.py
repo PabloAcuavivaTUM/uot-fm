@@ -71,30 +71,40 @@ from numpy.typing import ArrayLike
 from transformers import AutoProcessor, FlaxCLIPModel
 
 
-def get_clip_fns() -> Tuple[Callable, Callable]:
+def get_clip_fns(batch_size: int = 256) -> Tuple[Callable, Callable]:
     fx_path = "openai/clip-vit-base-patch32"
     model = FlaxCLIPModel.from_pretrained(fx_path)
     processor = AutoProcessor.from_pretrained(fx_path)
 
-    # @jax.jit
-    # Does not like to be jitted as it does internal non-jittable transforms
     def encode_img_fn(img_batch: ArrayLike) -> jax.Array:
-        inputs = processor(
-            images=img_batch, return_tensors="np", padding=True
-        ).pixel_values
+        num_batches = img_batch.shape[0] // batch_size
+        img_embs = []
+        for i in range(num_batches + 1):
+            batch = img_batch[i * batch_size : (i + 1) * batch_size]
+            if len(batch) > 0:
+                inputs = processor(
+                    images=batch, return_tensors="np", padding=True
+                ).pixel_values
 
-        img_emb = model.get_image_features(inputs)
-        img_emb /= jnp.sqrt((img_emb**2).sum(axis=1)[:, None])
+                img_emb = model.get_image_features(inputs)
+                img_emb /= jnp.sqrt((img_emb**2).sum(axis=1)[:, None])
+                img_embs.append(img_emb)
+        return jnp.concatenate(img_embs, axis=0)
 
-        return img_emb
-
-    # ! Cannot jit as it is fed strings!
     def encode_text_fn(text_batch: List[str]) -> jax.Array:
-        inputs = processor(text=text_batch, return_tensors="np", padding=True).input_ids
+        num_batches = len(text_batch) // batch_size
+        text_embs = []
+        for i in range(num_batches + 1):
+            batch = text_batch[i * batch_size : (i + 1) * batch_size]
+            if len(batch) > 0:
+                inputs = processor(
+                    text=batch, return_tensors="np", padding=True
+                ).input_ids
 
-        text_emb = model.get_text_features(inputs)
-        text_emb /= jnp.sqrt((text_emb**2).sum(axis=1)[:, None])
-        return text_emb
+                text_emb = model.get_text_features(inputs)
+                text_emb /= jnp.sqrt((text_emb**2).sum(axis=1)[:, None])
+                text_embs.append(text_emb)
+        return jnp.concatenate(text_embs, axis=0)
 
     return encode_img_fn, encode_text_fn
 
