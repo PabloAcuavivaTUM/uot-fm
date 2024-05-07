@@ -9,7 +9,7 @@ from ott.geometry import costs, geometry
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
 
-from utils.ot_cost_fns import create_cost_matrix, get_nearest_neighbors
+from utils.ot_cost_fns import create_cost_matrix
 
 
 def sinkhorn_matching(
@@ -54,15 +54,33 @@ def sinkhorn_matching(
     )
     return ot_out.matrix
 
-
-def distance_matching(f, X, Y=None, normalize: bool = True):
+def distance_matching(f, X, Y=None, 
+                      exp_normalize: bool = False, 
+                      softmax : bool = True, 
+                      dist_mult : int = 1,
+                      as_coupling: bool =True, ):
     if Y is None:
         matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(X))(X)
     else:
         matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(Y))(X)
+    
+    # Set self-distance-similarity to 0
+    matrix = matrix.at[jnp.arange(matrix.shape[0]), jnp.arange(matrix.shape[0])].set(0)
+    matrix *= dist_mult
 
-    if normalize:
-        matrix /= jnp.sum(matrix)
+    if softmax:
+        # Notice here we are making further away (in distance metrics) have higher score
+        # This is to make is similar to how CLIP works (high cosine similarity score for related points)
+        matrix = jax.nn.softmax(matrix, axis=1)  
+        if as_coupling: # Normalize so that matrix adds to one (right now it adds to one row-wise)
+            matrix /= matrix.shape[0]
+
+    elif exp_normalize:
+        # Closer points should have a higher value 
+        matrix = np.max(matrix) - matrix
+        if as_coupling: # Normalize to a coupling
+            matrix /= jnp.sum(matrix)
+
     return matrix
 
 
