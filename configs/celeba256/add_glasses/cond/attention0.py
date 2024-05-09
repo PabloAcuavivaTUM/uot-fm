@@ -14,7 +14,7 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = "celeba256-add-glasses-Attention0"
+    config.name = "celeba256-add-glasses-Attention0-fromVAE"
     config.wandb_group = "cond"
     config.training.cond = True
     config.training.cond_method = 'attention'

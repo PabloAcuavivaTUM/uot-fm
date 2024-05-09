@@ -290,7 +290,6 @@ class CondUNetFiLM(eqx.Module):
             h = layer(h)
         return h
 
-
 class CondUNetCrossAttention(eqx.Module):
     time_pos_emb: SinusoidalPosEmb
     mlp: eqx.nn.MLP
@@ -300,7 +299,7 @@ class CondUNetCrossAttention(eqx.Module):
     mid_block2: CrossAttentionResnetBlock
     ups_res_blocks: list[list[CrossAttentionResnetBlock]]
     final_conv_layers: list[Union[Callable, eqx.nn.LayerNorm, eqx.nn.Conv2d]]
-    cond_cnn : SimpleCNN
+    # cond_cnn : Optional[SimpleCNN]
 
     def __init__(
         self,
@@ -342,7 +341,10 @@ class CondUNetCrossAttention(eqx.Module):
         use_full_block2 = True
         cond_cnn_dim_channels = [data_channels] + cond_cnn_dim_channels
         cond_dim = cond_cnn_dim_channels[-1]
-        self.cond_cnn = SimpleCNN(dim_channels=cond_cnn_dim_channels, dropout_rate=dropout_rate, key=keys[2], use_full_block2=use_full_block2)
+        
+        if False: # Deactivate for now for quick testing
+            self.cond_cnn = SimpleCNN(dim_channels=cond_cnn_dim_channels, dropout_rate=dropout_rate, key=keys[2], use_full_block2=use_full_block2)
+        
         # ----------
 
         h, w = in_height, in_width
@@ -525,7 +527,8 @@ class CondUNetCrossAttention(eqx.Module):
         h = self.first_conv(x_t)
         hs = [h]
         key, subkey = key_split_allowing_none(key)
-        cond = self.cond_cnn(x0, key=subkey)
+        #cond = self.cond_cnn(x0, key=subkey)
+        cond = x0 
                 
         for res_blocks in self.down_res_blocks:
             for res_block in res_blocks:
