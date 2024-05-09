@@ -54,6 +54,7 @@ def sinkhorn_matching(
     )
     return ot_out.matrix
 
+# Maybe same the name to f matching or something, as we are not only using distances (for softmax, normality similarity scores)
 def distance_matching(f, X, Y=None, 
                       exp_normalize: bool = False, 
                       softmax : bool = True, 

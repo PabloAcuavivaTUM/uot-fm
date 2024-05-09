@@ -13,8 +13,9 @@ def get_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
+    config.training.eval_freq = 5000 #25000
     # config.overfit_to_one_batch = True
-    config.name = "celeba256-add-glasses-FiLM"
+    config.name = "celeba256-add-glasses-FiLM-ExtraEval"
     config.wandb_group = "cond"
     config.training.cond = True
     config.training.cond_method = 'film'
