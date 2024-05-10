@@ -337,12 +337,12 @@ class CondUNetCrossAttention(eqx.Module):
         )
         
         # ! Move to arguments in init. For now testing
-        cond_cnn_dim_channels  = [32, 64, 128]
-        use_full_block2 = True
-        cond_cnn_dim_channels = [data_channels] + cond_cnn_dim_channels
-        cond_dim = cond_cnn_dim_channels[-1]
-        
+        cond_dim = 4
         if False: # Deactivate for now for quick testing
+            cond_cnn_dim_channels  = [32, 64, 128]
+            use_full_block2 = True
+            cond_cnn_dim_channels = [data_channels] + cond_cnn_dim_channels
+            cond_dim = cond_cnn_dim_channels[-1]
             self.cond_cnn = SimpleCNN(dim_channels=cond_cnn_dim_channels, dropout_rate=dropout_rate, key=keys[2], use_full_block2=use_full_block2)
         
         # ----------

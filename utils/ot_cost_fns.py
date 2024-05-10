@@ -123,3 +123,36 @@ def create_cost_matrix(
         ).cost_matrix
 
     return cm
+
+
+##########################################################################
+# It is not really related to OT transport but we leave it here for now
+def fmatching(f, X, Y=None,  
+                      softmax : bool = True, 
+                      dist_mult : int = 1,
+                      as_coupling: bool =True, ):
+    if Y is None:
+        matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(X))(X)
+    else:
+        matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(Y))(X)
+    
+    # Set self-distance-similarity to 0
+    matrix = matrix.at[jnp.arange(matrix.shape[0]), jnp.arange(matrix.shape[0])].set(0)
+    matrix *= dist_mult
+
+    if softmax:
+        # Notice here we are making further away (in distance metrics) have higher score
+        # This is to make is similar to how CLIP works (high cosine similarity score for related points)
+        matrix = jax.nn.softmax(matrix, axis=1)  
+        if as_coupling: # Normalize so that matrix adds to one (right now it adds to one row-wise)
+            matrix /= matrix.shape[0]
+    else:
+        # Closer points should have a higher value 
+        m = jnp.max(matrix)
+        matrix = (m - matrix) / m
+        # matrix = jnp.exp(matrix)
+        
+        if as_coupling: # Normalize to a coupling
+            matrix /= jnp.sum(matrix)
+
+    return matrix
