@@ -109,6 +109,7 @@ def create_cost_matrix(
         if geometry == "geodesic"
         else graph.Graph.from_graph
     )
+    # default t=1e-3, single cell data: 100. Try different ts: [0.1, 1, 10, 100]
 
     if Y is not None:
         cm = geometry_fn(

@@ -19,6 +19,7 @@ def get_loss_builder(config: ConfigDict):
             gamma=config.training.gamma,
             weight=lambda t: 1.0,
             solver=config.solver,
+            cond=config.training.cond,
         )
     elif config.training.method == "flow-vp-matching":
         raise NotImplementedError
@@ -101,6 +102,7 @@ class FlowMatching:
         dt0: float,
         t0: float = 0.0,
         gamma: str = "constant",
+        cond: bool = False,
         flow_sigma: Optional[float] = 0.1,
         weight: Optional[Callable[[float], float]] = lambda t: 1.0,
         solver: str = "tsit5",
@@ -112,6 +114,7 @@ class FlowMatching:
         self.sigma = flow_sigma
         self.weight = weight
         self.solver = solver
+        self.cond = cond
 
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
@@ -148,7 +151,12 @@ class FlowMatching:
             noise = jr.normal(key, x1.shape)
             u_t = self.compute_flow(x1, x0)
             x_t = self.sample_xt(x1, x0, t, noise)
-            pred = model(t, x_t, key=key)
+
+            if self.cond:
+                pred = model(t, x_t, x0, key=key)
+            else:
+                pred = model(t, x_t, key=key)
+
             return self.weight(t) * jnp.mean((pred - u_t) ** 2)
 
         def batch_loss_fn(
@@ -197,9 +205,13 @@ class FlowMatching:
         def single_sample_fn(model: eqx.Module, x0: jax.Array) -> jax.Array:
             """Produce single sample from the CNF by integrating forward."""
 
-            def func(t, x, args):
-                return model(t, x)
-
+            if self.cond:
+                def func(t, x, args, x0=x0):                    
+                        return model(t, x, x0)
+            else:
+                def func(t, x, args):
+                        return model(t, x)
+            # --- 
             term = dfx.ODETerm(func)
             if self.solver == "tsit5":
                 solver = dfx.Tsit5()

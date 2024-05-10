@@ -412,6 +412,7 @@ def explore_cost_fn(
                 limit_elements_to_display=32,
                 filename=os.path.join(cost_fn_folderi, "top_random_batch.jpg"),
             )
+
             plt.close(fig)
 
             # Figures. Bottom
@@ -447,6 +448,14 @@ def explore_cost_fn(
                     batch_size=batch_size,
                     mask_by_Xid=mask_byXid,
                 )
+
+#            fig, ax = sample_plot(
+#                X=sampleX,
+#                Y=sampleY,
+#                nrow=16,
+#                ncol=16,
+#                filename=os.path.join(cost_fn_folderi, "sample_random_batch.jpg"),
+#            )
 
                 Nsamples = sampleX.shape[0]
                 nrow = floor(jnp.sqrt(Nsamples))
@@ -500,6 +509,7 @@ def explore_cost_fn(
                     limit_elements_to_display=32,
                     filename=os.path.join(cost_fn_folderi, f"best_{metric}.jpg"),
                 )
+
                 plt.close(fig)
 
                 # Figures. Bottom
@@ -531,6 +541,7 @@ def explore_cost_fn(
                     limit_elements_to_display=32,
                     filename=os.path.join(cost_fn_folderi, f"worse_{metric}.jpg"),
                 )
+
                 plt.close(fig)
 
     # Metrics Summarization

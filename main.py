@@ -1,9 +1,11 @@
-from absl import app
-from absl import flags
-import blobfile as bf
-from ml_collections.config_flags import config_flags
 import logging
 import os
+
+import blobfile as bf
+
+#os.environ["CUDA_VISIBLE_DEVICES"] = "-1" # Deactivate GPU JaX in local
+from absl import app, flags
+from ml_collections.config_flags import config_flags
 
 FLAGS = flags.FLAGS
 

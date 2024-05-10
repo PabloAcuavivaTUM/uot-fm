@@ -1,15 +1,19 @@
 from typing import Callable, List, Tuple
-from diffusers import FlaxAutoencoderKL
-import ml_collections
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import ml_collections
+from diffusers import FlaxAutoencoderKL
 
+from models.cond_unet import CondUNetFiLM, CondUNetCrossAttention
 from models.mlpmixer import Mixer2d
 from models.unet import UNet
 
 
-def get_model(config: ml_collections.ConfigDict, data_shape: List[int], model_key: jr.KeyArray):
+def get_model(
+    config: ml_collections.ConfigDict, data_shape: List[int], model_key: jr.KeyArray
+):
     if config.model.type == "mlpmixer":
         return Mixer2d(
             data_shape,
@@ -22,25 +26,57 @@ def get_model(config: ml_collections.ConfigDict, data_shape: List[int], model_ke
             key=model_key,
         )
     elif config.model.type == "unet":
-        return UNet(
-            data_shape,
-            is_biggan=config.model.biggan_sample,
-            dim_mults=config.model.dim_mults,
-            hidden_size=config.model.hidden_size,
-            heads=config.model.heads,
-            dim_head=config.model.dim_head,
-            dropout_rate=config.model.dropout,
-            num_res_blocks=config.model.num_res_blocks,
-            attn_resolutions=config.model.attention_resolution,
-            key=model_key,
-        )
+        if config.training.cond:
+            if config.training.cond_method == 'film':
+                return CondUNetFiLM(
+                    data_shape,
+                    is_biggan=config.model.biggan_sample,
+                    dim_mults=config.model.dim_mults,
+                    hidden_size=config.model.hidden_size,
+                    heads=config.model.heads,
+                    dim_head=config.model.dim_head,
+                    dropout_rate=config.model.dropout,
+                    num_res_blocks=config.model.num_res_blocks,
+                    attn_resolutions=config.model.attention_resolution,
+                    key=model_key,
+                )
+            elif config.training.cond_method == "attention":
+                return CondUNetCrossAttention(
+                    data_shape,
+                    is_biggan=config.model.biggan_sample,
+                    dim_mults=config.model.dim_mults,
+                    hidden_size=config.model.hidden_size,
+                    heads=config.model.heads,
+                    dim_head=config.model.dim_head,
+                    dropout_rate=config.model.dropout,
+                    num_res_blocks=config.model.num_res_blocks,
+                    attn_resolutions=config.model.attention_resolution,
+                    key=model_key,
+                )
+            else:
+                raise ValueError(f"Unknown conditioning method {config.training.cond_method}.")
+        else:
+            return UNet(
+                data_shape,
+                is_biggan=config.model.biggan_sample,
+                dim_mults=config.model.dim_mults,
+                hidden_size=config.model.hidden_size,
+                heads=config.model.heads,
+                dim_head=config.model.dim_head,
+                dropout_rate=config.model.dropout,
+                num_res_blocks=config.model.num_res_blocks,
+                attn_resolutions=config.model.attention_resolution,
+                key=model_key,
+            )
     else:
         raise ValueError(f"Unknown model type {config.model.type}")
 
 
 def get_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
     fx_path = "CompVis/stable-diffusion-v1-4"
-    vae, vae_params = FlaxAutoencoderKL.from_pretrained(fx_path, subfolder="vae", revision="flax", dtype=jnp.float32)
+    vae, vae_params = FlaxAutoencoderKL.from_pretrained(
+        fx_path, subfolder="vae", revision="flax", dtype=jnp.float32
+    )
     # replicate vae params across all devices
     vae_params = jax.device_put(vae_params, shard.replicate())
 
@@ -53,7 +89,11 @@ def get_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
 
     @jax.jit
     def decode_fn(latent_batch: jax.Array) -> jax.Array:
-        image_out = vae.apply({"params": vae_params}, latent_batch / vae.config.scaling_factor, method=vae.decode)
+        image_out = vae.apply(
+            {"params": vae_params},
+            latent_batch / vae.config.scaling_factor,
+            method=vae.decode,
+        )
         return jax.lax.with_sharding_constraint(image_out.sample, shard)
 
     return encode_fn, decode_fn
