@@ -9,7 +9,7 @@ import jax.random as jr
 from ott.geometry.pointcloud import PointCloud
 from ott.solvers.linear import sinkhorn
 
-from .ot_cost_fns import cost_fns, create_cost_matrix
+from .ot_cost_fns import cost_fns, create_cost_matrix, fmatching
 
 
 @dataclass
@@ -63,38 +63,52 @@ class BatchResampler:
             target_batch: jax.Array,
             source_labels: Optional[jax.Array] = None,
             target_labels: Optional[jax.Array] = None,
+            matching_method : Literal["ot", "softmax_dist", "abs_dist"] = "ot",
             geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
-            # TODO: Add options with mode, similiar to sinkhor_matching in costs_fn_metrics to allow geodesic (and graph?)
+            if matching_method == "ot":
+                if geometry == "pointcloud":
+                    geom = PointCloud(
+                        jnp.reshape(source_batch, [self.batch_size, -1]),
+                        jnp.reshape(target_batch, [self.batch_size, -1]),
+                        epsilon=self.epsilon,
+                        scale_cost="mean",
+                        cost_fn=cost_fns[self.cost_fn],
+                    )
+                else:
+                    cm = create_cost_matrix(
+                        X=source_batch,
+                        Y=target_batch,
+                        k_neighbors=30,
+                        cost_fn=self.cost_fn,
+                        geometry=geometry,
+                    )
+                    geom = geometry.Geometry(
+                        cost_matrix=cm,
+                        epsilon=self.epsilon,
+                        scale_cost="mean",
+                    )
 
-            if geometry == "pointcloud":
-                geom = PointCloud(
-                    jnp.reshape(source_batch, [self.batch_size, -1]),
-                    jnp.reshape(target_batch, [self.batch_size, -1]),
-                    epsilon=self.epsilon,
-                    scale_cost="mean",
-                    cost_fn=cost_fns[self.cost_fn],
+                    ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
+
+                    # get flattened log transition matrix
+                    transition_matrix = jnp.log(ot_out.matrix.flatten())
+
+            elif (matching_method == "softmax_dist") or (matching_method == "abs_dist"):
+                f = 0 # TODO: Get proper f function
+                fmatching(
+                    f, 
+                    X=source_batch, 
+                    Y=target_batch, 
+                    softmax=False, 
+                    dist_mult=1, 
+                    as_coupling=True,
                 )
             else:
-                cm = create_cost_matrix(
-                    X=source_batch,
-                    Y=source_batch,
-                    k_neighbors=30,
-                    cost_fn=self.cost_fn,
-                    geometry=geometry,
-                )
-                geom = geometry.Geometry(
-                    cost_matrix=cm,
-                    epsilon=self.epsilon,
-                    scale_cost="mean",
-                )
+                raise ValueError(f'Invalid matching_method provided {matching_method}.')
 
-            ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
-
-            # get flattened log transition matrix
-            transition_matrix = jnp.log(ot_out.matrix.flatten())
             # sample from transition_matrix
             indeces = jax.random.categorical(
                 key, transition_matrix, shape=[self.batch_size]
