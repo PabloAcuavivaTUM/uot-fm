@@ -10,6 +10,7 @@ def get_emnist_letters_config(config):
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.1
     config.training.ot_cost_fn = "sqeuclidean"
+    config.training.ot_geometry = "pointcloud"
 
     # data
     config.data = data = ml_collections.ConfigDict()

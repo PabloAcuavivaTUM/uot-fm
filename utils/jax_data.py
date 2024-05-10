@@ -1,15 +1,17 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
+import logging 
 
 import dm_pix as pix
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from ott.geometry.pointcloud import PointCloud
+from ott.geometry.pointcloud import geometry, PointCloud
 from ott.solvers.linear import sinkhorn
 
 from .ot_cost_fns import cost_fns, create_cost_matrix, fmatching
+
 
 
 @dataclass
@@ -54,8 +56,11 @@ class BatchResampler:
     tau_b: float = 1.0
     epsilon: float = 1e-2
     cost_fn: str = "sqeuclidean"
-
+    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud"
+    t : float = 0.001
+    
     def __post_init__(self):
+        logging.info(f'Value t={self.t} is being used')
         @eqx.filter_jit(donate="all")
         def _resample(
             key: jr.KeyArray,
@@ -108,6 +113,7 @@ class BatchResampler:
                 )
             else:
                 raise ValueError(f'Invalid matching_method provided {matching_method}.')
+
 
             # sample from transition_matrix
             indeces = jax.random.categorical(

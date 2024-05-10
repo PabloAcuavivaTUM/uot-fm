@@ -1,5 +1,6 @@
 import itertools
 import os
+from math import floor
 from typing import Callable, Iterable, Optional, Tuple, Union
 
 import jax
@@ -45,6 +46,8 @@ def resample(
     batch_labelY: Optional[jax.Array] = None,
     batch_size: int = 256,
     logprob: bool = True,
+    mask_by_Xid: Optional[int] = None,
+    mask_by_Yid: Optional[int] = None,
 ) -> Tuple[jax.Array, jax.Array]:
     if logprob:
         transition_matrix = jnp.log(matrix.flatten())
@@ -60,12 +63,27 @@ def resample(
             batchX[resampled_indeces_source],
             batchY[resampled_indeces_target],
         )
-    return (
+
+    sample_batchX, sample_batchY, sample_batch_labelX, sample_batch_labelY = (
         batchX[resampled_indeces_source],
         batchY[resampled_indeces_target],
         batch_labelX[resampled_indeces_source],
         batch_labelY[resampled_indeces_target],
     )
+
+    if mask_by_Xid is not None:
+        mask = sample_batch_labelX[:, mask_by_Xid].astype(bool).ravel()
+        sample_batchX = sample_batchX[mask]
+        sample_batchY = sample_batchY[mask]
+        sample_batch_labelX = sample_batch_labelX[mask]
+        sample_batch_labelY = sample_batch_labelY[batch_labelX]
+    if mask_by_Yid is not None:
+        mask = sample_batch_labelY[:, mask_by_Yid].astype(bool).ravel()
+        sample_batchX = sample_batchX[mask]
+        sample_batchY = sample_batchY[mask]
+        sample_batch_labelX = sample_batch_labelX[mask]
+        sample_batch_labelY = sample_batch_labelY[batch_labelX]
+    return sample_batchX, sample_batchY, sample_batch_labelX, sample_batch_labelY
 
 
 def single_cost_fn_metrics(
@@ -101,6 +119,32 @@ def single_cost_fn_metrics(
     )
 
     metrics[f"sample"] = sim_sample
+
+    # ! It only works for celeba, to make it quick we add it here, we should make it part of config
+    # Attribute ids:
+    ids = dict(
+        id_male=20,
+        id_gray_hair=17,
+        id_bald=4,
+        id_young=39,
+        id_hat=35,
+        id_glasses=15,
+    )
+
+    def get_mask_celeba(id_mask: int):
+        mask = jnp.zeros(40).astype(bool)
+        mask = mask.at[id_mask].set(True)
+        return mask
+
+    for id_name, id_int in ids.items():
+        mask = get_mask_celeba(id_int)
+        sim_sample = similarity_top_k(
+            sample_labelX,
+            top_k_labels=sample_labelY[:, None, ...],
+            mask=mask,
+        )
+
+        metrics[f"sample_{id_name}"] = sim_sample
 
     return metrics
 
@@ -335,6 +379,8 @@ def explore_cost_fn(
         batch_idxY = batch_idxs["Y"][random_batch_idx]
         batchX = X[batch_idxX]
         batchY = Y[batch_idxY]
+        batch_labelX = labelX[batch_idxX]
+        batch_labelY = labelY[batch_idxY]
 
         for cost_fn_namei, cost_fni in cost_fn.items():
 
@@ -367,6 +413,8 @@ def explore_cost_fn(
                 filename=os.path.join(cost_fn_folderi, "top_random_batch.jpg"),
             )
 
+            plt.close(fig)
+
             # Figures. Bottom
             bottom_k_elements = rowwise_take_top_k(-matrixi, top_k=16, labels=batchY)
             fig, ax = comparison_plot(
@@ -375,24 +423,55 @@ def explore_cost_fn(
                 limit_elements_to_display=32,
                 filename=os.path.join(cost_fn_folderi, "bottom_random_batch.jpg"),
             )
+            plt.close(fig)
 
-            # Figures. Sample
-            key, key_sample = jax.random.split(key, 2)
-            sampleX, sampleY = resample(
-                matrix=matrixi,
-                batchX=batchX,
-                batchY=batchY,
-                key=key_sample,
-                batch_size=batch_size,
+            # Figures. Sample.
+            # ! Hardcoded for celeba for now
+            ids = dict(
+                no_id_filter=None,
+                id_male=20,
+                id_gray_hair=17,
+                id_bald=4,
+                id_young=39,
+                id_hat=35,
+                id_glasses=15,
             )
+            for subname, mask_byXid in ids.items():
+                key, key_sample = jax.random.split(key, 2)
+                sampleX, sampleY, _, _ = resample(
+                    matrix=matrixi,
+                    batchX=batchX,
+                    batchY=batchY,
+                    batch_labelX=batch_labelX,
+                    batch_labelY=batch_labelY,
+                    key=key_sample,
+                    batch_size=batch_size,
+                    mask_by_Xid=mask_byXid,
+                )
 
-            fig, ax = sample_plot(
-                X=sampleX,
-                Y=sampleY,
-                nrow=16,
-                ncol=16,
-                filename=os.path.join(cost_fn_folderi, "sample_random_batch.jpg"),
-            )
+#            fig, ax = sample_plot(
+#                X=sampleX,
+#                Y=sampleY,
+#                nrow=16,
+#                ncol=16,
+#                filename=os.path.join(cost_fn_folderi, "sample_random_batch.jpg"),
+#            )
+
+                Nsamples = sampleX.shape[0]
+                nrow = floor(jnp.sqrt(Nsamples))
+                ncol = 2 * nrow
+                if nrow <= 1:
+                    continue
+                fig, ax = sample_plot(
+                    X=sampleX,
+                    Y=sampleY,
+                    nrow=nrow,
+                    ncol=ncol,
+                    filename=os.path.join(
+                        cost_fn_folderi, f"sample_random_batch_{subname}.jpg"
+                    ),
+                )
+                plt.close(fig)
 
             # Figures. Best and Worse Top and bottom k matching
             for metric in ["top_5", "bottom_5"]:
@@ -431,6 +510,8 @@ def explore_cost_fn(
                     filename=os.path.join(cost_fn_folderi, f"best_{metric}.jpg"),
                 )
 
+                plt.close(fig)
+
                 # Figures. Bottom
                 batch_idxX = batch_idxs["X"][np.argmin(metric_field)]
                 batch_idxY = batch_idxs["Y"][np.argmin(metric_field)]
@@ -460,6 +541,8 @@ def explore_cost_fn(
                     limit_elements_to_display=32,
                     filename=os.path.join(cost_fn_folderi, f"worse_{metric}.jpg"),
                 )
+
+                plt.close(fig)
 
     # Metrics Summarization
     if summarize:
