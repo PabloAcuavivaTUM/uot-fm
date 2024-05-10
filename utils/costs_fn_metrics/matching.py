@@ -54,9 +54,7 @@ def sinkhorn_matching(
     )
     return ot_out.matrix
 
-# Maybe same the name to f matching or something, as we are not only using distances (for softmax, normality similarity scores)
-def distance_matching(f, X, Y=None, 
-                      exp_normalize: bool = False, 
+def fmatching(f, X, Y=None,  
                       softmax : bool = True, 
                       dist_mult : int = 1,
                       as_coupling: bool =True, ):
@@ -75,14 +73,21 @@ def distance_matching(f, X, Y=None,
         matrix = jax.nn.softmax(matrix, axis=1)  
         if as_coupling: # Normalize so that matrix adds to one (right now it adds to one row-wise)
             matrix /= matrix.shape[0]
-
-    elif exp_normalize:
+    else:
         # Closer points should have a higher value 
-        matrix = np.max(matrix) - matrix
+        m = jnp.max(matrix)
+        matrix = (m - matrix) / m
+        # matrix = jnp.exp(matrix)
+        
         if as_coupling: # Normalize to a coupling
             matrix /= jnp.sum(matrix)
 
     return matrix
+
+# Duplicate function definition for backward-compatibility
+distance_matching = fmatching
+
+
 
 
 def rowwise_keep_top_k(matrix: ArrayLike, top_k: int):
