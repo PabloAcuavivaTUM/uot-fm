@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
+import logging 
 
 import dm_pix as pix
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from ott.geometry.pointcloud import PointCloud
+from ott.geometry.pointcloud import geometry, PointCloud
 from ott.solvers.linear import sinkhorn
+
 
 from .ot_cost_fns import cost_fns, create_cost_matrix
 
@@ -54,8 +56,11 @@ class BatchResampler:
     tau_b: float = 1.0
     epsilon: float = 1e-2
     cost_fn: str = "sqeuclidean"
-
+    geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud"
+    t : float = 0.001
+    
     def __post_init__(self):
+        logging.info(f'Value t={self.t} is being used')
         @eqx.filter_jit(donate="all")
         def _resample(
             key: jr.KeyArray,
@@ -63,13 +68,10 @@ class BatchResampler:
             target_batch: jax.Array,
             source_labels: Optional[jax.Array] = None,
             target_labels: Optional[jax.Array] = None,
-            geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud",
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
-            # TODO: Add options with mode, similiar to sinkhor_matching in costs_fn_metrics to allow geodesic (and graph?)
-
-            if geometry == "pointcloud":
+            if self.geometry == "pointcloud":
                 geom = PointCloud(
                     jnp.reshape(source_batch, [self.batch_size, -1]),
                     jnp.reshape(target_batch, [self.batch_size, -1]),
@@ -79,11 +81,12 @@ class BatchResampler:
                 )
             else:
                 cm = create_cost_matrix(
-                    X=source_batch,
-                    Y=source_batch,
-                    k_neighbors=30,
-                    cost_fn=self.cost_fn,
-                    geometry=geometry,
+                    X=jnp.reshape(source_batch, [self.batch_size, -1]),
+                    Y=jnp.reshape(target_batch, [self.batch_size, -1]),
+                    k_neighbors=128, # This should be an hyperparameter
+                    cost_fn=cost_fns[self.cost_fn],
+                    geometry=self.geometry,
+                    t=self.t,
                 )
                 geom = geometry.Geometry(
                     cost_matrix=cm,

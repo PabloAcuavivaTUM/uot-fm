@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 import jax
@@ -8,13 +9,20 @@ from ott.geometry import geometry
 from ott.solvers import linear
 
 
-def similarity_top_k(label: ArrayLike, top_k_labels: ArrayLike) -> float:
+def similarity_top_k(
+    label: ArrayLike, top_k_labels: ArrayLike, mask: ArrayLike = None
+) -> float:
+    if mask is not None:
+        label = label[:, mask]
+        top_k_labels = top_k_labels[..., mask]
     # Distance function between two labels
     diff_fn = jax.vmap(
         lambda x, y: 1
-        - jnp.sum(jnp.abs(x - y), axis=1) / (jnp.sum(x) + jnp.sum(y, axis=1)),
+        - jnp.sum(jnp.abs(x - y), axis=1)
+        / jnp.maximum(1, (jnp.sum(x) + jnp.sum(y, axis=1))),
         in_axes=(0, 0),
     )
+
     # ---
     similarity = diff_fn(label, top_k_labels)  # [B, k]
 
