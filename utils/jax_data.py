@@ -84,8 +84,8 @@ class BatchResampler:
                     )
                 else:
                     cm = create_cost_matrix(
-                        X=source_batch,
-                        Y=target_batch,
+                        X=jnp.reshape(source_batch, [self.batch_size, -1]),
+                        Y=jnp.reshape(target_batch, [self.batch_size, -1]),
                         k_neighbors=30,
                         cost_fn=self.cost_fn,
                         geometry=geometry,
