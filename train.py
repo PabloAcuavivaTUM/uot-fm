@@ -1,6 +1,8 @@
 import logging
 import os
 
+os.environ["WANDB__SERVICE_WAIT"] = "300"
+
 import equinox as eqx
 import jax
 import jax.experimental.mesh_utils as mesh_utils
@@ -64,7 +66,8 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             epsilon=config.training.epsilon,
             cost_fn=config.training.ot_cost_fn,
             geometry=config.training.ot_geometry, 
-            **config.training.ot_geometry_kwargs, 
+            geometry_cost_matrix_kwargs=config.training.geometry_cost_matrix_kwargs, 
+            matching_method=config.training.matching_method
         )
     # build model and optimization functions
     model = get_model(config, config.model.input_shape, model_key)

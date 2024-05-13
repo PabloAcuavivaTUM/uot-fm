@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import ott.geometry.costs as costs
-
+import logging 
 
 # CUSTOM COSTS
 @jax.tree_util.register_pytree_node_class
@@ -42,6 +42,16 @@ cost_fns = dict(
     elastic_l2=costs.ElasticL2(),
     elastic_stvs=costs.ElasticSTVS(),
 )
+
+dist_fns = dict(
+    sqeuclidean=lambda x,y: jax.numpy.linalg.norm(((x-y).ravel()), ord=2),
+    l1=lambda x,y: jax.numpy.linalg.norm((x-y.ravel()), ord=1),
+    euclidean=lambda x,y: jax.numpy.linalg.norm(((x-y).ravel()), ord=2)**2,
+    dot=lambda x,y: jnp.dot(x,y), # Cosine if vectors are normalized
+    cosine = lambda x,y: jnp.dot(x.ravel(),y.ravel()) / (jax.numpy.linalg.norm((y.ravel()), ord=2)*jax.numpy.linalg.norm((x.ravel()), ord=2)),
+    coulomb=lambda x,y: 1 / jnp.max(1e-9, jax.numpy.linalg.norm((x-y).ravel(), ord=2)),
+)
+
 
 #####################################
 #   Graphs & Geodesics functionality
@@ -109,8 +119,7 @@ def create_cost_matrix(
         if geometry == "geodesic"
         else graph.Graph.from_graph
     )
-    # default t=1e-3, single cell data: 100. Try different ts: [0.1, 1, 10, 100]
-
+    
     if Y is not None:
         cm = geometry_fn(
             adj_matrix,
@@ -129,10 +138,19 @@ def create_cost_matrix(
 
 ##########################################################################
 # It is not really related to OT transport but we leave it here for now
+def take_top_k_rowwise(matrix : jax.Array, top_k : int = 3):
+    top_indices = jnp.argsort(matrix, axis=1)[:, -top_k:]
+    mask = jnp.zeros_like(matrix, dtype=bool)
+    rows = jnp.arange(matrix.shape[0])[:, None]
+    mask = mask.at[rows, top_indices].set(True)
+
+    return jnp.where(mask, matrix, jnp.zeros_like(matrix))
+
 def fmatching(f, X, Y=None,  
                       softmax : bool = True, 
                       dist_mult : int = 1,
-                      as_coupling: bool =True, ):
+                      as_coupling: bool =True, 
+                      top_k : int = None):
     if Y is None:
         matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(X))(X)
     else:
@@ -146,15 +164,19 @@ def fmatching(f, X, Y=None,
         # Notice here we are making further away (in distance metrics) have higher score
         # This is to make is similar to how CLIP works (high cosine similarity score for related points)
         matrix = jax.nn.softmax(matrix, axis=1)  
-        if as_coupling: # Normalize so that matrix adds to one (right now it adds to one row-wise)
-            matrix /= matrix.shape[0]
+
     else:
         # Closer points should have a higher value 
         m = jnp.max(matrix)
         matrix = (m - matrix) / m
         # matrix = jnp.exp(matrix)
-        
-        if as_coupling: # Normalize to a coupling
-            matrix /= jnp.sum(matrix)
+    
+    
+    if top_k is not None:
+        matrix = take_top_k_rowwise(matrix, top_k=top_k)
+        # matrix = take_top_k_rowwise(matrix.T, top_k=top_k).T
+
+    if as_coupling: # Normalize to a coupling
+        matrix /= jnp.sum(matrix)
 
     return matrix
