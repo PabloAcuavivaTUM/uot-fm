@@ -10,6 +10,7 @@ def get_fm_config():
 
     # training
     config.training.method = "flow"
+    config.training.matching_method = "ot"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.0
     config.training.matching = False

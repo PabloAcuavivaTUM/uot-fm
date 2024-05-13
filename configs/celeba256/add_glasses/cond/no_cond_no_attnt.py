@@ -20,4 +20,6 @@ def get_config():
     
     config.model.attention_resolution = [] # Remove attention layers
 
+    
+
     return config

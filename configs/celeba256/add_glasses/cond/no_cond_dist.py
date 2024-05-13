@@ -14,14 +14,26 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = f"celeba256-add-glasses-Attention-Normal-fromVAE-FreqEval"
+    config.name = "celeba256-add-glasses-NoFiLM-dist-matrix-8*"
     config.wandb_group = "cond"
-    config.training.cond = True
-    config.training.cond_method = 'attention'; 
+    config.training.cond = False
     
-    config.training.eval_freq = 5000
-    # Do not modify attention (so it keeps middle and at resolution 16)
-    # config.training.flow_sigma = sigma
+
+    config.training.matching_method = "abs_dist"
+
+    # # [TEST]
+    # # Remove vae & Make fast load with fake data
+    # config.name = "celeba256-add-glasses-NoFiLM-dist-matrix-Failed"
+    # config.model.use_vae = False
+    # config.data.source = "celeba_fake"
+    # config.data.target = "celeba_fake"
     
+    # # Make network smaller to fit into one GPU
+    # config.model.hidden_size = 16
+    # config.model.dim_mults = [1,1,1]
+    # config.model.num_res_blocks = 2
+    
+
+
 
     return config

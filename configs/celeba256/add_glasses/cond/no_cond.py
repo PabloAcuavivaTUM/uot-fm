@@ -14,7 +14,8 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = "celeba256-add-glasses-NoFiLM"
+    config.training.eval_freq = 5000
+    config.name = "celeba256-add-glasses-NoFiLM-Frequent_eval"
     config.wandb_group = "cond"
     config.training.cond = False
 

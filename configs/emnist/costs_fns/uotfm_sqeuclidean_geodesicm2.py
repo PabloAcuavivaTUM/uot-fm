@@ -11,13 +11,13 @@ def get_config():
     config = get_uotfm_config()
     config = get_mlpmixer_config(config)
     config = get_emnist_letters_config(config)
-    config.name = f"uot-fm_emnist_letters_{ot_cost_fn}_{ot_geometry}_t={ot_geometry_t}"
+    config.name = f"uot-fm_emnist_letters_{ot_cost_fn}_{ot_geometry}_t={ot_geometry_t}-good"
     config.training.tau_a = 0.9
     config.training.tau_b = 1.0
 
     config.training.ot_cost_fn = ot_cost_fn
     config.wandb_group = "costs_fns"
     config.training.ot_geometry = ot_geometry
-    config.training.ot_geometry_kwargs = dict(t=ot_geometry_t)
+    config.training.geometry_cost_matrix_kwargs = dict(t=ot_geometry_t)
 
     return config

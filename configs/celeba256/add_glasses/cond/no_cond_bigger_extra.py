@@ -14,14 +14,13 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = f"celeba256-add-glasses-Attention-Normal-fromVAE-FreqEval"
+    config.name = "celeba256-add-glasses-NoFiLM-biggerExtra"
     config.wandb_group = "cond"
-    config.training.cond = True
-    config.training.cond_method = 'attention'; 
-    
-    config.training.eval_freq = 5000
-    # Do not modify attention (so it keeps middle and at resolution 16)
-    # config.training.flow_sigma = sigma
-    
+    config.training.cond = False
+
+    config.model.hidden_size = 96
+    config.model.dim_mults = [4, 6, 8]
+
+    config.model.attention_resolution = [16, 32]
 
     return config
