@@ -153,6 +153,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         name=config.name,
         config=config,
     )
+    # Manual eval freq points
+    eval_freq_points = config.training.get('eval_freq_points', [])
+    
     for step in tqdm(range(steps), total=steps):
         train_key, resample_key = jr.split(train_key, 2)
         if config.task == "translation":
@@ -184,7 +187,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             wandb.log({"train_loss": total_train_loss.item() / total_steps}, step=step)
             total_train_loss = 0
             total_steps = 0
-        if (step % config.training.eval_freq) == 0 and step != 0 or step == steps - 1:
+        
+        
+        if ((step % config.training.eval_freq) == 0 and step != 0) or (step == steps - 1) or (step in eval_freq_points):
             if config.eval.compute_metrics:
                 logging.info(f"Step {step}, Computing metrics...")
                 if config.optim.ema_decay < 1.0:

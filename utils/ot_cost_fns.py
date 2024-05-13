@@ -169,7 +169,6 @@ def fmatching(f, X, Y=None,
         # Closer points should have a higher value 
         m = jnp.max(matrix)
         matrix = (m - matrix) / m
-        # matrix = jnp.exp(matrix)
     
     
     if top_k is not None:

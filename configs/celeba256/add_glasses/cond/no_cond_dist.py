@@ -14,12 +14,16 @@ def get_config():
     config.training.tau_b = 0.95
 
     # config.overfit_to_one_batch = True
-    config.name = "celeba256-add-glasses-NoFiLM-dist-matrix-8*"
+    config.name = "celeba256-add-glasses-NoFiLM-dist-matrix-8*-ExtraEval"
     config.wandb_group = "cond"
     config.training.cond = False
     
 
     config.training.matching_method = "abs_dist"
+
+
+    config.training.eval_freq = 25_000
+    config.training.eval_freq_points = [5_000, 10_000, 15_000, 20_000, 30_000, 35_000]
 
     # # [TEST]
     # # Remove vae & Make fast load with fake data
