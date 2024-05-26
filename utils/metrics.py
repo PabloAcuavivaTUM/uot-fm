@@ -2,6 +2,7 @@ from typing import Callable, Optional
 
 import functools as ft
 import einops
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,11 +12,11 @@ import numpy as np
 import scipy
 import tensorflow as tf
 from tqdm import tqdm
-import wandb
 import warnings
+import logging 
 
 from models import inception
-
+from .miscellaneous import EasyDict, jx_device_put, generate_wb_image
 
 class MetricComputer:
     """
@@ -30,6 +31,7 @@ class MetricComputer:
         sample_fn: Callable,
         vae_decode_fn: Optional[Callable] = None,
         vae_encode_fn: Optional[Callable] = None,
+        is_genot : bool = False
     ):
         # load pretrained inceptionv3 model
         rng = jax.random.PRNGKey(0)
@@ -42,11 +44,11 @@ class MetricComputer:
         if self.task == "translation":
             self.num_eval_samples = eval_ds.length
         else:
-            self.num_eval_samples = config.eval.eval_samples
+            self.num_eval_samples = config.eval.eval_samples 
         self.batch_size = config.training.batch_size
         self.return_samples = config.eval.save_samples
         if self.return_samples:
-            self.num_save_samples = config.eval.num_save_samples
+            self.num_save_samples = config.eval.num_save_samples 
         self.dataset = eval_ds
         self.repeat = 3 if config.data.shape[0] == 1 else 1
         self.input_shape = config.model.input_shape
@@ -80,6 +82,8 @@ class MetricComputer:
                     self.mus_real.append(precomputed_stats["mu"])
                     self.sigmas_real.append(precomputed_stats["sigma"])
 
+        self.is_genot = is_genot
+        
     def compute_metrics(self, model: eqx.Module, key: jr.KeyArray):
         """
         Compute metrics for evaluation.
@@ -103,58 +107,64 @@ class MetricComputer:
         # create vmap functions
         partial_sample_fn = ft.partial(self.sample_fn, model)
         # compute metrics batch-wise
-        eval_num_iter = self.num_eval_samples // self.batch_size
+        eval_num_iter = max(self.num_eval_samples // self.batch_size, 1)
         if self.task == "translation":
             loader = iter(self.dataset)
         for _ in tqdm(range(eval_num_iter)):
             if self.task == "translation":
-                batch = next(loader)
-                # get data
-                if self.eval_labelwise:
-                    src_batch, src_label = batch
-                else:
-                    src_batch = batch
+                src_batch = next(loader)
                 # padding for last batch if necessary
-                pad_size = self.batch_size - src_batch.shape[0]
+                pad_size = self.batch_size - src_batch.data.shape[0]
                 if pad_size > 0:
-                    # pad batch, shard and unpad
-                    src_batch = jnp.pad(src_batch, ((0, pad_size), (0, 0), (0, 0), (0, 0)))
+                    # TODO (IF using labels for something in the model): Here probably need to pad the whole thing. Also labels/embeddings...
+                    src_batch['data'] = jnp.pad(src_batch.data, ((0, pad_size), (0, 0), (0, 0), (0, 0)))
             else:
                 sample_key, key = jr.split(key, 2)
                 pad_size = 0
-                src_batch = jr.normal(sample_key, [self.batch_size, *self.input_shape])
-            src_batch = jax.device_put(src_batch, self.shard)
+                src_batch = EasyDict(data=jr.normal(sample_key, [self.batch_size, *self.input_shape]), label=None)
+            
+            # src_batch = jax.device_put(src_batch, self.shard)
+            # src_batch = src_batch.device_put(self.shard)
+            src_batch = jx_device_put(src_batch, self.shard)
+
             if inputs is None:
-                if self.use_vae:
-                    inputs = self.vae_decode_fn(src_batch) * 0.5 + 0.5
+                if self.use_vae:                                        
+                    inputs = self.vae_decode_fn(src_batch.data) * 0.5 + 0.5
                 else:
-                    inputs = src_batch * 0.5 + 0.5
+                    inputs = src_batch.data * 0.5 + 0.5
             elif inputs.shape[0] < 2400:
                 if self.use_vae:
                     inputs = jnp.concatenate(
-                        [inputs, self.vae_decode_fn(src_batch)[: int(2400 - inputs.shape[0])] * 0.5 + 0.5]
+                        [inputs, self.vae_decode_fn(src_batch.data)[: int(2400 - inputs.shape[0])] * 0.5 + 0.5]
                     )
                 else:
-                    inputs = jnp.concatenate([inputs, src_batch[: int(2400 - inputs.shape[0])] * 0.5 + 0.5])
+                    inputs = jnp.concatenate([inputs, src_batch.data[: int(2400 - inputs.shape[0])] * 0.5 + 0.5])
+            
             # sample from model
-            sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch)
+            if self.is_genot:
+                batch_size = src_batch.data.shape[0]
+                ode_key = jr.split(key, batch_size)
+            else:
+                ode_key = None
+            
+            sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch, ode_key)
             
             nfes.append(nfe)
             if self.enable_path_lengths:
                 # compute euclidean distance between samples and inputs
                 if pad_size > 0:
-                    path_lengths.append(self.rmse_fn(src_batch[:-pad_size], sample_batch[:-pad_size]))
+                    path_lengths.append(self.rmse_fn(src_batch.data[:-pad_size], sample_batch[:-pad_size]))
                 else:
-                    path_lengths.append(self.rmse_fn(src_batch, sample_batch))
+                    path_lengths.append(self.rmse_fn(src_batch.data, sample_batch))
             if self.use_vae:
-                sample_batch = jax.device_put(sample_batch, self.shard)
+                sample_batch = jx_device_put(sample_batch, self.shard)
                 sample_batch = self.vae_decode_fn(sample_batch)
             sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
             if self.enable_fid:
                 inception_act = self.compute_inception_acts(sample_batch)
                 inception_acts.append(inception_act)
-            if pad_size > 0:
-                src_batch = src_batch[:-pad_size]
+            if pad_size > 0: # TODO: What is the function of padding src_batc['data']? It doesn't seem to be used 
+                src_batch['data'] = src_batch.data[:-pad_size]
                 sample_batch = sample_batch[:-pad_size]
             # safe samples and compute inception activation
             if samples is None:
@@ -164,15 +174,18 @@ class MetricComputer:
             if self.eval_labelwise:
                 for idx, label in enumerate(self.eval_labels):
                     if label == 201:
-                        labels_indices[idx].append((src_label[:, 20] == -1))
+                        labels_indices[idx].append((src_batch.label[:, 20] == -1))
                     else:
-                        labels_indices[idx].append((src_label[:, label] == 1.0))
+                        labels_indices[idx].append((src_batch.label[:, label] == 1.0))
+
+        
         eval_dict["nfe"] = jnp.mean(jnp.hstack(nfes))
         if self.enable_mse:
             eval_dict["mse"] = jnp.mean(jnp.hstack(mses))
         if self.enable_path_lengths:
             eval_dict["path_lengths"] = jnp.mean(jnp.hstack(path_lengths)) * 127.5
             eval_dict["path_lengths_std"] = jnp.std(jnp.hstack(path_lengths)) * 127.5
+        
         # compute fid
         if self.enable_fid:
             inception_acts = jnp.concatenate(inception_acts, axis=0)
@@ -184,64 +197,32 @@ class MetricComputer:
         if self.return_samples:
             # save image grid loggable to wandb
             if self.task == "generation":
-                image_grid = jnp.concatenate([samples[: self.num_save_samples**2]])
-                image_grid = einops.rearrange(
-                    image_grid,
-                    "(n m) c h w -> (n h) (m w) c",
-                    n=self.num_save_samples,
-                    m=self.num_save_samples,
-                )
+                wb_image = generate_wb_image(samples=samples, num_samples=self.num_save_samples) 
             else:
-                nmb_double_rows = self.num_save_samples // 2
-                # create image grid of alternating rows of input and output
-                rows = []
-                for row_idx in range(nmb_double_rows):
-                    rows.append(inputs[row_idx * self.num_save_samples : (row_idx + 1) * self.num_save_samples])
-                    rows.append(samples[row_idx * self.num_save_samples : (row_idx + 1) * self.num_save_samples])
-                image_grid = jnp.concatenate(rows)
-                image_grid = einops.rearrange(
-                    image_grid,
-                    "(n m) c h w -> (n h) (m w) c",
-                    n=nmb_double_rows * 2,
-                    m=self.num_save_samples,
-                )
-            eval_dict["samples"] = wandb.Image(np.array(image_grid))
-            if self.eval_labelwise:
-                # compute fid labelwise
-                fid_scores = []
-                for idx, label in enumerate(self.eval_labels):
-                    label_indices = jnp.concatenate(labels_indices[idx], axis=0)
-                    if self.enable_fid:
-                        inception_act_label = inception_acts[label_indices]
-                        mu = jnp.mean(inception_act_label, axis=0)
-                        sigma = jnp.cov(inception_act_label, rowvar=False)
-                        fid_score = self.compute_fid(self.mus_real[idx], self.sigmas_real[idx], mu, sigma)
-                        eval_dict[f"fid_{label}"] = fid_score
-                        fid_scores.append(fid_score)
-                    if self.return_samples:
-                        # save image grid loggable to wandb
-                        plot_indices = label_indices[:2400]
-                        rows = []
-                        for row_idx in range(nmb_double_rows):
-                            rows.append(
-                                inputs[plot_indices][
-                                    row_idx * self.num_save_samples : (row_idx + 1) * self.num_save_samples
-                                ]
-                            )
-                            rows.append(
-                                samples[plot_indices][
-                                    row_idx * self.num_save_samples : (row_idx + 1) * self.num_save_samples
-                                ]
-                            )
-                        image_grid = jnp.concatenate(rows)
-                        image_grid = einops.rearrange(
-                            image_grid,
-                            "(n m) c h w -> (n h) (m w) c",
-                            n=nmb_double_rows * 2,
-                            m=self.num_save_samples,
-                        )
-                        eval_dict[f"samples_{label}"] = wandb.Image(np.array(image_grid))
-                eval_dict["fid_average"] = jnp.mean(jnp.hstack(fid_scores))
+                wb_image = generate_wb_image(samples=samples, inputs=inputs, num_samples=self.num_save_samples)
+            eval_dict["samples"] = wb_image
+        
+        if self.eval_labelwise:
+            # compute fid labelwise
+            fid_scores = []
+            for idx, label in enumerate(self.eval_labels):
+                label_indices = jnp.concatenate(labels_indices[idx], axis=0)
+                if self.enable_fid:
+                    inception_act_label = inception_acts[label_indices]
+                    mu = jnp.mean(inception_act_label, axis=0)
+                    sigma = jnp.cov(inception_act_label, rowvar=False)
+                    fid_score = self.compute_fid(self.mus_real[idx], self.sigmas_real[idx], mu, sigma)
+                    eval_dict[f"fid_{label}"] = fid_score
+                    fid_scores.append(fid_score)
+                if self.return_samples: # ! Notice here we always assume we are in the translation setting for now 
+                    plot_indices = label_indices[:2400]
+                    wb_image = generate_wb_image(samples=samples[plot_indices], 
+                                                inputs=inputs[plot_indices], 
+                                                num_samples=self.num_save_samples,
+                                                      )
+                    eval_dict[f"samples_{label}"] = wb_image
+            
+            eval_dict["fid_average"] = jnp.mean(jnp.hstack(fid_scores))
         return eval_dict
 
     def compute_inception_acts(self, image_batch: jax.Array) -> jax.Array:

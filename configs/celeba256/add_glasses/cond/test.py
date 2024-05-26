@@ -15,9 +15,10 @@ def get_config():
 
     # config.overfit_to_one_batch = True
     config.name = "celeba256-add-glasses-test"
-    config.wandb_group = "cond"
+    config.wandb_group = "ignore"
     config.training.num_steps = 10
-    config.training.cond = True
+    config.training.cond = False
+    config.training.cond_method = "film"
 
     # Remove vae & Make fast load with fake data
     config.model.use_vae = False

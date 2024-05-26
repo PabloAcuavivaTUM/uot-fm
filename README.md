@@ -51,12 +51,16 @@ cd data/emnist
 conda activate uot-fm
 python preprocess_emnist.py
 ```
+
 This saves the subset of EMNIST we consider in our experiments, with source digits `{0,1,8}` and target letters `{O,I,B}`.
 
 #### CelebA
 Download the CelebA dataset from [here](https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFzTm8?resourcekey=0-5BR16BdXnb8hVj6CNHKzLg). Download and unpack `Img/img_align_celeba.zip` as well as `Eval/list_eval_partition.txt` and `Anno/list_attr_celeba.txt`, and move all of them into `data/celeba`.
 
-After downloading both datasets your data folder should include the following:
+#### Horse2Zebra
+Download and unpack the horse2zebra dataset from [here](https://www.kaggle.com/datasets/balraj98/horse2zebra-dataset?resource=download). Afterwards move the downloaded `archive` into `data/horse2zebra`.
+
+After downloading the datasets your data folder should include the following:
 ```
 ├── data
 │   ├── emnist
@@ -72,12 +76,14 @@ After downloading both datasets your data folder should include the following:
 ```
 
 #### FID reference statistics 
-We use the FID implementation provided by [jax-fid](https://github.com/matthias-wright/jax-fid). We precompute all reference statistics needed for the FID computation for `EMNIST`, `CIFAR10`, and `CelebA`. To do this, run
+We use the FID implementation provided by [jax-fid](https://github.com/matthias-wright/jax-fid). We precompute all reference statistics needed for the FID computation for `EMNIST`, `CIFAR10`, `CelebA` and `horse2zebra`. To do this, run
 
 ```
 python compute_fid_reference_stats.py
 ```
+
 This will compute reference statistics for both full datasets, as well as the attribute-wise ones we consider in the paper.
+
 ## Experiments
 We rely on nested [ml-collections](https://github.com/google/ml_collections) to configure all experiments, which you can find in `/configs`. These are structured in the following way:
 

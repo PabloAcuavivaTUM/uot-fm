@@ -6,17 +6,17 @@ def get_unet_config(config):
     # model
     config.model = model = ml_collections.ConfigDict()
     model.type = "unet"
-    model.hidden_size = 128
-    model.dim_mults = [2, 2, 2]
+    model.hidden_size = 64
+    model.dim_mults = [1, 1, 2]
     model.num_res_blocks = 4
     model.heads = 1
-    model.dim_head = 64
+    model.dim_head = 32
     model.attention_resolution = [16]
     model.dropout = 0.1
     model.biggan_sample = False
     model.use_vae = True
     model.input_shape = [4, 32, 32]
-
+    
     # conditioning
     model.cross_attn_resolutions = []
     model.cross_attn_dim = model.input_shape[0]

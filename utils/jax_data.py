@@ -11,7 +11,7 @@ from ott.geometry.pointcloud import geometry, PointCloud
 from ott.solvers.linear import sinkhorn
 
 from .ot_cost_fns import dist_fns, cost_fns, create_cost_matrix, fmatching
-
+from .miscellaneous import EasyDict
 
 
 @dataclass
@@ -59,7 +59,8 @@ class BatchResampler:
     geometry: Literal["pointcloud", "graph", "geodesic"] = "pointcloud"
     geometry_cost_matrix_kwargs : Optional[dict] = None
     matching_method : Literal["ot", "softmax_dist", "abs_dist"] = "ot"
-    
+    compare_on : Literal["data", "embedding"] = "data"
+
     def __post_init__(self):
         if self.geometry_cost_matrix_kwargs is None:
             self.geometry_cost_matrix_kwargs = dict()
@@ -69,12 +70,9 @@ class BatchResampler:
             key: jr.KeyArray,
             source_batch: jax.Array,
             target_batch: jax.Array,
-            source_labels: Optional[jax.Array] = None,
-            target_labels: Optional[jax.Array] = None,
         ) -> Tuple[jax.Array, jax.Array]:
             """Jitted resample function."""
             # solve regularized ot between batch_source and batch_target reshaped to (batch_size, dimension)
-
             if self.matching_method == "ot":
                 if self.geometry == "pointcloud":
                     geom = PointCloud(
@@ -100,54 +98,54 @@ class BatchResampler:
                     )
 
                 ot_out = sinkhorn.solve(geom, tau_a=self.tau_a, tau_b=self.tau_b)
-                transition_matrix = ot_out.matrix.flatten()
+                transition_matrix = ot_out.matrix
 
-            elif (self.matching_method == "softmax_dist") or (self.matching_method == "abs_dist"):
+            elif self.matching_method in ["softmax_dist", "abs_dist"]:
                 transition_matrix = fmatching(
                     dist_fns[self.cost_fn], 
                     X=source_batch, 
                     Y=target_batch, 
-                    softmax=False, 
+                    softmax=self.matching_method == "softmax_dist", 
                     dist_mult=100, 
-                    top_k=8, 
+                    top_k=4, 
                     as_coupling=True,
-                ).flatten()
+                )
             else:
                 raise ValueError(f'Invalid matching_method provided {self.matching_method}.')
 
-
             # get flattened log transition matrix
-            transition_matrix = jnp.log(transition_matrix)
+            transition_matrix = jnp.log(transition_matrix.flatten())
 
             # sample from transition_matrix
             indeces = jax.random.categorical(
                 key, transition_matrix, shape=[self.batch_size]
             )
+            
             resampled_indeces_source = indeces // self.batch_size
             resampled_indeces_target = indeces % self.batch_size
-            if source_labels is None:
-                return (
-                    source_batch[resampled_indeces_source],
-                    target_batch[resampled_indeces_target],
-                )
-            return (
-                source_batch[resampled_indeces_source],
-                target_batch[resampled_indeces_target],
-                source_labels[resampled_indeces_source],
-                target_labels[resampled_indeces_target],
-            )
 
+            return resampled_indeces_source, resampled_indeces_target 
+
+            
         self.resample = _resample
 
     def __call__(
         self,
         key: jr.KeyArray,
-        source_batch: jax.Array,
-        target_batch: jax.Array,
-        source_labels: Optional[jax.Array] = None,
-        target_labels: Optional[jax.Array] = None,
+        source_batch: EasyDict,
+        target_batch: EasyDict,
     ) -> Tuple[jax.Array, jax.Array]:
         """Sample data."""
-        return self.resample(
-            key, source_batch, target_batch, source_labels, target_labels
+        
+        # print('Resampling')
+        # print("source_batch: ", {k: v.shape for k,v in source_batch.items()})
+        # print("target_batch: ", {k: v.shape for k,v in target_batch.items()})
+    
+        resampled_indeces_source, resampled_indeces_target = self.resample(
+            key, source_batch[self.compare_on], target_batch[self.compare_on]
         )
+
+        return (
+                source_batch.slice(resampled_indeces_source),
+                target_batch.slice(resampled_indeces_target),
+            )

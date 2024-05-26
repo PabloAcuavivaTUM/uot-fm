@@ -9,6 +9,7 @@ import jax.experimental.mesh_utils as mesh_utils
 import jax.numpy as jnp
 import jax.random as jr
 import jax.sharding as sharding
+import jax.experimental.mesh_utils as mesh_utils
 import ml_collections
 import numpy as np
 import optax
@@ -24,6 +25,9 @@ from utils import (
     get_loss_builder,
     get_optimizer,
     get_translation_datasets,
+    EasyDict, 
+    jx_device_put, 
+    generate_wb_image,
 )
 
 
@@ -36,8 +40,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     model_key, train_key, eval_key = jr.split(key, 3)
     # set up sharding
     num_devices = len(jax.devices())
-    # shard needs to have same number of dimensions as the input
-    devices = mesh_utils.create_device_mesh((num_devices, 1, 1, 1))
+    devices = mesh_utils.create_device_mesh((num_devices, 1,1,1)) 
     shard = sharding.PositionalSharding(devices)
     # get data
     batch_size = config.training.batch_size
@@ -45,10 +48,12 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         logging.info("Loading VAE...")
         # load vae and jitted encode/decode functions
         vae_encode_fn, vae_decode_fn = get_vae_fns(shard)
+    else:
+        vae_encode_fn, vae_decode_fn = None, None 
 
     if config.task == "translation":
         train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds = get_translation_datasets(
-            config, shard, vae_encode_fn if config.model.use_vae else None
+            config, shard, vae_encode_fn
         )
         train_src_loader, train_tgt_loader = iter(train_src_ds), iter(train_tgt_ds)
         logging.info(f"num_train_src: {train_src_ds.length}")
@@ -56,8 +61,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         logging.info(f"num_eval_src: {eval_src_ds.length}")
         logging.info(f"num_eval_tgt: {eval_tgt_ds.length}")
     elif config.task == "generation":
+        # TODO: It does not work, as it does not return easydict. Notice we can probably unify all this in "get_datasets"
         train_loader = get_generation_datasets(config)
-        train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds = None, None, None, None
+        eval_src_ds, eval_tgt_ds = None, None
     if config.training.matching:
         batch_resampler = BatchResampler(
             batch_size=batch_size,
@@ -67,8 +73,10 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             cost_fn=config.training.ot_cost_fn,
             geometry=config.training.ot_geometry, 
             geometry_cost_matrix_kwargs=config.training.geometry_cost_matrix_kwargs, 
-            matching_method=config.training.matching_method
+            matching_method=config.training.matching_method,
+            compare_on=config.training.compare_on,
         )
+
     # build model and optimization functions
     model = get_model(config, config.model.input_shape, model_key)
     loss_builder = get_loss_builder(config)
@@ -76,6 +84,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     opt = get_optimizer(config)
     opt_state = opt.init(eqx.filter(model, eqx.is_array))
     train_step_fn = loss_builder.get_train_step_fn(loss_fn, opt.update)
+    
     if config.optim.ema_decay > 0.0:
         assert config.optim.ema_decay < 1.0
         opt_ema = optax.ema(config.optim.ema_decay, debias=False)
@@ -87,7 +96,6 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                 eqx.filter(curr_model, eqx.is_array), curr_ema_state
             )
             return ema_state
-
     else:
         ema_state = None
 
@@ -98,8 +106,8 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             shard=shard,
             eval_ds=eval_src_ds,
             sample_fn=sample_fn,
-            vae_encode_fn=vae_encode_fn if config.model.use_vae else None,
-            vae_decode_fn=vae_decode_fn if config.model.use_vae else None,
+            vae_encode_fn=vae_encode_fn,
+            vae_decode_fn=vae_decode_fn,
         )
         if config.training.save_checkpoints:
             # create checkpoint manager
@@ -163,12 +171,16 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         else:
             sample_key, train_key = jr.split(train_key, 2)
             src_batch, tgt_batch = train_loader(sample_key)
-        src_batch, tgt_batch = jnp.array(src_batch), jnp.array(tgt_batch)
+        src_batch, tgt_batch = src_batch.to_jnp(), tgt_batch.to_jnp()
         if config.training.matching:
-            # resample batches
+            # resample batches            
             src_batch, tgt_batch = batch_resampler(resample_key, src_batch, tgt_batch)
-        # shard data
-        src_batch, tgt_batch = jax.device_put([src_batch, tgt_batch], shard)
+
+        # src_batch = src_batch.device_put(shard)
+        # tgt_batch = src_batch.device_put(shard)
+        src_batch = jx_device_put(src_batch, shard)
+        tgt_batch = jx_device_put(tgt_batch, shard)
+
         # train step
         train_loss, model, train_key, opt_state = train_step_fn(
             model,
@@ -187,8 +199,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             wandb.log({"train_loss": total_train_loss.item() / total_steps}, step=step)
             total_train_loss = 0
             total_steps = 0
-        
-        
+
         if ((step % config.training.eval_freq) == 0 and step != 0) or (step == steps - 1) or (step in eval_freq_points):
             if config.eval.compute_metrics:
                 logging.info(f"Step {step}, Computing metrics...")
@@ -202,6 +213,20 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     inference_model, metrics_key
                 )
                 logging.info(f"Step {step}, Metrics: {eval_dict}")
+                # Include current batched sample
+                if config.model.use_vae:
+                    tgt_batch_data = vae_decode_fn(tgt_batch.data) * 0.5 + 0.5
+                    src_batch_data = vae_decode_fn(src_batch.data) * 0.5 + 0.5
+                else:
+                    tgt_batch_data = tgt_batch.data
+                    src_batch_data = src_batch.data
+                eval_dict.update(dict(batch=generate_wb_image(samples=tgt_batch_data, 
+                                                               inputs=src_batch_data, 
+                                                               num_samples=config.eval.num_save_samples,
+                                                               )
+                                     )
+                                )
+                #####
                 wandb.log(eval_dict, step=step)
                 if config.training.save_checkpoints:
                     ckpt_mngr.save(

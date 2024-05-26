@@ -9,6 +9,7 @@ import jax.random as jr
 import optax
 from ml_collections import ConfigDict
 
+from .miscellaneous import EasyDict
 
 def get_loss_builder(config: ConfigDict):
     if config.training.method == "flow":
@@ -19,7 +20,6 @@ def get_loss_builder(config: ConfigDict):
             gamma=config.training.gamma,
             weight=lambda t: 1.0,
             solver=config.solver,
-            cond=config.training.cond,
         )
     elif config.training.method == "flow-vp-matching":
         raise NotImplementedError
@@ -102,10 +102,10 @@ class FlowMatching:
         dt0: float,
         t0: float = 0.0,
         gamma: str = "constant",
-        cond: bool = False,
         flow_sigma: Optional[float] = 0.1,
         weight: Optional[Callable[[float], float]] = lambda t: 1.0,
         solver: str = "tsit5",
+        is_genot : bool = False 
     ):
         self.t1 = t1
         self.t0 = t0
@@ -114,7 +114,7 @@ class FlowMatching:
         self.sigma = flow_sigma
         self.weight = weight
         self.solver = solver
-        self.cond = cond
+        self.is_genot = is_genot
 
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
@@ -143,34 +143,49 @@ class FlowMatching:
 
         def single_loss_fn(
             model: eqx.Module,
-            x1: jax.Array,
-            x0: jax.Array,
+            x1: EasyDict,
+            x0: EasyDict,
             t: float,
             key: jr.KeyArray,
         ) -> jax.Array:
-            noise = jr.normal(key, x1.shape)
-            u_t = self.compute_flow(x1, x0)
-            x_t = self.sample_xt(x1, x0, t, noise)
-
-            if self.cond:
-                pred = model(t, x_t, x0, key=key)
+            
+            if self.is_genot:
+                key, subkey = jr.split(key, 2)
+                src_data = jr.normal(subkey, shape=x1.data.shape)
             else:
-                pred = model(t, x_t, key=key)
+                src_data = x0.data
+
+            noise_xt = jr.normal(key, x1.data.shape)
+            
+            u_t = self.compute_flow(x1.data, src_data)
+            x_t = self.sample_xt(x1.data, src_data, t, noise_xt)
+
+            # TODO: If we change cross_attn_cond for something different than the VAE / Original image modify this
+            film_cond = x0.get("embedding", None)
+            cross_attn_cond=x0.data
+            ###
+
+            pred = model(t, x_t, 
+                         film_cond=film_cond, 
+                         cross_attn_cond=cross_attn_cond, 
+                         key=key,
+                        )
 
             return self.weight(t) * jnp.mean((pred - u_t) ** 2)
 
         def batch_loss_fn(
             model: eqx.Module,
-            x1: jax.Array,
-            x0: jax.Array,
+            x1: EasyDict,
+            x0: EasyDict,
             key: jr.KeyArray,
         ) -> jax.Array:
-            batch_size = x1.shape[0]
+            batch_size = x1.data.shape[0]
             tkey, losskey = jr.split(key)
             losskey = jr.split(losskey, batch_size)
             # Low-discrepancy sampling over t to reduce variance
             t = jr.uniform(tkey, (batch_size,), minval=0, maxval=self.t1 / batch_size)
             t = t + (self.t1 / batch_size) * jnp.arange(batch_size)
+
             loss_fn = jax.vmap(ft.partial(single_loss_fn, model))
             return jnp.mean(loss_fn(x1, x0, t, losskey))
 
@@ -185,8 +200,8 @@ class FlowMatching:
         @eqx.filter_jit
         def step(
             model: eqx.Module,
-            x1: jax.Array,
-            x0: jax.Array,
+            x1: EasyDict,
+            x0: EasyDict,
             key: jr.KeyArray,
             opt_state: optax.OptState,
         ) -> Tuple[jax.Array, eqx.Module, jr.KeyArray, optax.OptState]:
@@ -202,15 +217,17 @@ class FlowMatching:
         """Get single sample function."""
 
         @eqx.filter_jit
-        def single_sample_fn(model: eqx.Module, x0: jax.Array) -> jax.Array:
+        def single_sample_fn(model: eqx.Module, x0: EasyDict, key=None) -> jax.Array:
             """Produce single sample from the CNF by integrating forward."""
 
-            if self.cond:
-                def func(t, x, args, x0=x0):                    
-                        return model(t, x, x0)
-            else:
-                def func(t, x, args):
-                        return model(t, x)
+            def func(t, x_t, args, x0=x0): 
+                film_cond = x0.get("embedding", None)
+                cross_attn_cond=x0.data
+                return model(t, x_t, 
+                            film_cond=film_cond, 
+                            cross_attn_cond=cross_attn_cond, 
+                        )
+            
             # --- 
             term = dfx.ODETerm(func)
             if self.solver == "tsit5":
@@ -227,13 +244,19 @@ class FlowMatching:
             else:
                 stepsize_controller = dfx.ConstantStepSize()
                 dt0 = self.dt0
+            
+            if self.is_genot:
+                src_data = jr.normal(key, shape=x0.data.shape)
+            else:
+                src_data = x0.data
+
             sol = dfx.diffeqsolve(
                 term,
                 solver,
                 self.t0,
                 self.t1,
                 dt0,
-                x0,
+                src_data,
                 stepsize_controller=stepsize_controller,
             )
             return sol.ys[0], sol.stats["num_steps"]

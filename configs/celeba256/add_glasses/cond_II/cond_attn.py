@@ -13,10 +13,17 @@ def get_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-    # config.overfit_to_one_batch = True
-    #config.training.eval_freq = 5000
-    config.name = "celeba256-add-glasses-NoFiLM-NewCode"
+    config.name = f"celeba256-add-glasses-Attention-Unified"
     config.wandb_group = "cond"
-    config.training.cond = False
+
+    # conditioning
+    config.model.cross_attn_resolutions = [i for i in range(200)]
+    config.model.cross_attn_dim = config.model.input_shape[0]
+    config.model.film_resolutions = []
+    config.model.film_cond_dim = 0
+
+
+
+    
 
     return config

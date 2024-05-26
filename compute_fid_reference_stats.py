@@ -14,7 +14,7 @@ import tensorflow_datasets as tfds
 from tqdm import tqdm
 
 from models import inception
-from utils.datasets import celeba_attribute, central_crop, cifar10, emnist
+from utils.datasets import celeba_attribute, central_crop, cifar10, emnist, horse2zebra
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer(
@@ -46,13 +46,21 @@ def get_preprocess_fn(ds_name: str) -> Callable[[np.ndarray], tf.Tensor]:
             x = tf.image.resize(x, [64, 64], antialias=True)
         elif ds_name == "emnist":
             return x
+        elif ds_name == "horse2zebra32":
+            x = tf.image.resize(x, [32, 32], antialias=True)
+
         return tf.transpose(x, perm=[2, 0, 1])
 
     return process_ds
 
 
 def compute_fid_reference_stats(batch_size: int):
-    batch_size = 128 # ! HARDCODED
+    batch_size = 256 # TODO: HARDCODED - Make it available through console. 
+    compute_fid_emnist = False 
+    compute_fid_cifar10 = False
+    compute_fid_celeba = False
+    compute_fid_horse2zebra = True 
+    #####################
     logger = logging.getLogger()
     logger.setLevel("INFO")
     # load pretrained inceptionv3 model and setup jitted function
@@ -75,22 +83,11 @@ def compute_fid_reference_stats(batch_size: int):
         return inception_output.squeeze(axis=1).squeeze(axis=1)
 
     # compute emnist stats
-    logging.info("Computing reference statistics for emnist")
-    _, dataset, _, _ = emnist("test")
-    loader = prepare_dataset(dataset, "emnist", batch_size)
-    inception_acts = []
-    for batch in tqdm(loader):
-        batch = jnp.array(batch)
-        inception_acts.append(compute_inception_acts(batch, 3))
-    inception_acts = jnp.concatenate(inception_acts, axis=0)
-    mu = jnp.mean(inception_acts, axis=0)
-    sigma = jnp.cov(inception_acts, rowvar=False)
-    np.savez(f"assets/stats/emnist_letters.npz", mu=mu, sigma=sigma)
-    _, dataset, _, labels = emnist("full")
-    for label in [0, 1, 2]:
-        logging.info(f"Computing reference statistics for emnist, label {label}")
-        sub_dataset = dataset[np.array(labels[:, label], dtype=bool)]
-        loader = prepare_dataset(sub_dataset, "emnist", batch_size)
+    if compute_fid_emnist:
+        logging.info("Computing reference statistics for emnist")
+        _, dataset = emnist("test")
+        dataset = dataset.data
+        loader = prepare_dataset(dataset, "emnist", batch_size)
         inception_acts = []
         for batch in tqdm(loader):
             batch = jnp.array(batch)
@@ -98,81 +95,67 @@ def compute_fid_reference_stats(batch_size: int):
         inception_acts = jnp.concatenate(inception_acts, axis=0)
         mu = jnp.mean(inception_acts, axis=0)
         sigma = jnp.cov(inception_acts, rowvar=False)
-        np.savez(f"assets/stats/emnist_letters_{label}.npz", mu=mu, sigma=sigma)
+        np.savez(f"assets/stats/emnist_letters.npz", mu=mu, sigma=sigma)
+        _, dataset = emnist("full")
+        dataset, labels = dataset.data, dataset.labels
+        for label in [0, 1, 2]:
+            logging.info(f"Computing reference statistics for emnist, label {label}")
+            sub_dataset = dataset[np.array(labels[:, label], dtype=bool)]
+            loader = prepare_dataset(sub_dataset, "emnist", batch_size)
+            inception_acts = []
+            for batch in tqdm(loader):
+                batch = jnp.array(batch)
+                inception_acts.append(compute_inception_acts(batch, 3))
+            inception_acts = jnp.concatenate(inception_acts, axis=0)
+            mu = jnp.mean(inception_acts, axis=0)
+            sigma = jnp.cov(inception_acts, rowvar=False)
+            np.savez(f"assets/stats/emnist_letters_{label}.npz", mu=mu, sigma=sigma)
 
-    # compyte cifar10 stats
-    logging.info("Computing reference statistics for cifar10")
-    dataset = cifar10("train")
-    loader = prepare_dataset(dataset, "cifar", batch_size)
-    inception_acts = []
-    for batch in tqdm(loader):
-        batch = jnp.array(batch)
-        inception_acts.append(compute_inception_acts(batch, 1))
-    inception_acts = jnp.concatenate(inception_acts, axis=0)
-    mu = jnp.mean(inception_acts, axis=0)
-    sigma = jnp.cov(inception_acts, rowvar=False)
-    np.savez(f"assets/stats/cifar10_train.npz", mu=mu, sigma=sigma)
+    # compute cifar10 stats
+    if compute_fid_cifar10:
+        logging.info("Computing reference statistics for cifar10")
+        dataset = cifar10("train")
+        loader = prepare_dataset(dataset, "cifar", batch_size)
+        inception_acts = []
+        for batch in tqdm(loader):
+            batch = jnp.array(batch)
+            inception_acts.append(compute_inception_acts(batch, 1))
+        inception_acts = jnp.concatenate(inception_acts, axis=0)
+        mu = jnp.mean(inception_acts, axis=0)
+        sigma = jnp.cov(inception_acts, rowvar=False)
+        np.savez(f"assets/stats/cifar10_train.npz", mu=mu, sigma=sigma)
 
     # compute celeba256 stats
-    celeba_attribute_dict = {
-        "male": {
-            "attribute_id": 20,
-            "map_forward": True,
-            "subset_attributes": [15, 17, 35],
-        },
-        "female": {
-            "attribute_id": 20,
-            "map_forward": False,
-            "subset_attributes": [15, 17, 35],
-        },
-        "add-glasses": {
-            "attribute_id": 15,
-            "map_forward": True,
-            "subset_attributes": [17, 20, 201, 35],
-        },
-        "remove-glasses": {
-            "attribute_id": 15,
-            "map_forward": False,
-            "subset_attributes": [17, 20, 201, 35],
-        },
-    }
-    for name, data_args in celeba_attribute_dict.items():
-        subset_attributes = data_args.pop("subset_attributes")
-        logging.info(f"Computing reference statistics for celeba256 {name}")
-        _, target_data, _, _ = celeba_attribute(
-            "test", batch_size=batch_size, overfit_to_one_batch=False, **data_args
-        )
-        loader = prepare_dataset(target_data, "celeba256", batch_size)
-        inception_acts = []
-        for batch in tqdm(loader):
-            batch = jnp.array(batch)
-            inception_acts.append(compute_inception_acts(batch, 1))
-        inception_acts = jnp.concatenate(inception_acts, axis=0)
-        mu = jnp.mean(inception_acts, axis=0)
-        sigma = jnp.cov(inception_acts, rowvar=False)
-        np.savez(f"assets/stats/celeba256_{name}.npz", mu=mu, sigma=sigma)
-        logging.info(f"Computing reference statistics for celeba64 {name}")
-        loader = prepare_dataset(target_data, "celeba64", batch_size)
-        inception_acts = []
-        for batch in tqdm(loader):
-            batch = jnp.array(batch)
-            inception_acts.append(compute_inception_acts(batch, 1))
-        inception_acts = jnp.concatenate(inception_acts, axis=0)
-        mu = jnp.mean(inception_acts, axis=0)
-        sigma = jnp.cov(inception_acts, rowvar=False)
-        np.savez(f"assets/stats/celeba64_{name}.npz", mu=mu, sigma=sigma)
-        # compute celeba labelwise stats
-        for subset_attribute in subset_attributes:
-            logging.info(
-                f"Computing reference statistics for celeba256 {name}, label {subset_attribute}"
+    if compute_fid_celeba:
+        celeba_attribute_dict = {
+            "male": {
+                "attribute_id": 20,
+                "map_forward": True,
+                "subset_attributes": [15, 17, 35],
+            },
+            "female": {
+                "attribute_id": 20,
+                "map_forward": False,
+                "subset_attributes": [15, 17, 35],
+            },
+            "add-glasses": {
+                "attribute_id": 15,
+                "map_forward": True,
+                "subset_attributes": [17, 20, 201, 35],
+            },
+            "remove-glasses": {
+                "attribute_id": 15,
+                "map_forward": False,
+                "subset_attributes": [17, 20, 201, 35],
+            },
+        }
+        for name, data_args in celeba_attribute_dict.items():
+            subset_attributes = data_args.pop("subset_attributes")
+            logging.info(f"Computing reference statistics for celeba256 {name}")
+            _, target_data = celeba_attribute(
+                "test", batch_size=batch_size, overfit_to_one_batch=False, **data_args
             )
-            _, target_data, _, _ = celeba_attribute(
-                "full",
-                batch_size=batch_size,
-                overfit_to_one_batch=False,
-                subset_attribute_id=subset_attribute,
-                **data_args,
-            )
+            target_data = target_data.data
             loader = prepare_dataset(target_data, "celeba256", batch_size)
             inception_acts = []
             for batch in tqdm(loader):
@@ -181,26 +164,92 @@ def compute_fid_reference_stats(batch_size: int):
             inception_acts = jnp.concatenate(inception_acts, axis=0)
             mu = jnp.mean(inception_acts, axis=0)
             sigma = jnp.cov(inception_acts, rowvar=False)
-            np.savez(
-                f"assets/stats/celeba256_{name}_{subset_attribute}.npz",
-                mu=mu,
-                sigma=sigma,
-            )
-            logging.info(
-                f"Computing reference statistics for celeba64 {name}, label {subset_attribute}"
-            )
+            np.savez(f"assets/stats/celeba256_{name}.npz", mu=mu, sigma=sigma)
+            logging.info(f"Computing reference statistics for celeba64 {name}")
             loader = prepare_dataset(target_data, "celeba64", batch_size)
             inception_acts = []
             for batch in tqdm(loader):
+                batch = jnp.array(batch)
                 inception_acts.append(compute_inception_acts(batch, 1))
             inception_acts = jnp.concatenate(inception_acts, axis=0)
             mu = jnp.mean(inception_acts, axis=0)
             sigma = jnp.cov(inception_acts, rowvar=False)
-            np.savez(
-                f"assets/stats/celeba64_{name}_{subset_attribute}.npz",
-                mu=mu,
-                sigma=sigma,
-            )
+            np.savez(f"assets/stats/celeba64_{name}.npz", mu=mu, sigma=sigma)
+            # compute celeba labelwise stats
+            for subset_attribute in subset_attributes:
+                logging.info(
+                    f"Computing reference statistics for celeba256 {name}, label {subset_attribute}"
+                )
+                _, target_data = celeba_attribute(
+                    "full",
+                    batch_size=batch_size,
+                    overfit_to_one_batch=False,
+                    subset_attribute_id=subset_attribute,
+                    **data_args,
+                )
+                target_data = target_data.data
+                loader = prepare_dataset(target_data, "celeba256", batch_size)
+                inception_acts = []
+                for batch in tqdm(loader):
+                    batch = jnp.array(batch)
+                    inception_acts.append(compute_inception_acts(batch, 1))
+                inception_acts = jnp.concatenate(inception_acts, axis=0)
+                mu = jnp.mean(inception_acts, axis=0)
+                sigma = jnp.cov(inception_acts, rowvar=False)
+                np.savez(
+                    f"assets/stats/celeba256_{name}_{subset_attribute}.npz",
+                    mu=mu,
+                    sigma=sigma,
+                )
+                logging.info(
+                    f"Computing reference statistics for celeba64 {name}, label {subset_attribute}"
+                )
+                loader = prepare_dataset(target_data, "celeba64", batch_size)
+                inception_acts = []
+                for batch in tqdm(loader):
+                    inception_acts.append(compute_inception_acts(batch, 1))
+                inception_acts = jnp.concatenate(inception_acts, axis=0)
+                mu = jnp.mean(inception_acts, axis=0)
+                sigma = jnp.cov(inception_acts, rowvar=False)
+                np.savez(
+                    f"assets/stats/celeba64_{name}_{subset_attribute}.npz",
+                    mu=mu,
+                    sigma=sigma,
+                )
+    
+    if compute_fid_horse2zebra: 
+        logging.info("Computing reference statistics for horse2zebra")
+        _, dataset = horse2zebra(split="test", 
+                                batch_size=batch_size,
+                                overfit_to_one_batch=False,
+                            )
+        dataset = dataset.data
+        loader = prepare_dataset(dataset, "horse2zebra", batch_size)
+        inception_acts = []
+        for batch in tqdm(loader):
+            batch = jnp.array(batch)
+            inception_acts.append(compute_inception_acts(batch, 3))
+        inception_acts = jnp.concatenate(inception_acts, axis=0)
+        mu = jnp.mean(inception_acts, axis=0)
+        sigma = jnp.cov(inception_acts, rowvar=False)
+        np.savez(f"assets/stats/horse2zebra.npz", mu=mu, sigma=sigma)
+
+        logging.info("Computing reference statistics for horse2zebra32")
+        _, dataset = horse2zebra(split="test", 
+                                batch_size=batch_size,
+                                overfit_to_one_batch=False,
+                            )
+        dataset = dataset.data
+        loader = prepare_dataset(dataset, "horse2zebra32", batch_size)
+        inception_acts = []
+        for batch in tqdm(loader):
+            batch = jnp.array(batch)
+            inception_acts.append(compute_inception_acts(batch, 3))
+        inception_acts = jnp.concatenate(inception_acts, axis=0)
+        mu = jnp.mean(inception_acts, axis=0)
+        sigma = jnp.cov(inception_acts, rowvar=False)
+        np.savez(f"assets/stats/horse2zebra32.npz", mu=mu, sigma=sigma)
+
 
 
 if __name__ == "__main__":

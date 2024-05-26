@@ -13,10 +13,14 @@ def get_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-    # config.overfit_to_one_batch = True
-    #config.training.eval_freq = 5000
-    config.name = "celeba256-add-glasses-NoFiLM-NewCode"
+    config.name = "celeba256-add-glasses-NoCond-Unified"
     config.wandb_group = "cond"
-    config.training.cond = False
+
+    ########
+    # config.overfit_to_one_batch = True
+    # config.training.num_steps = 2
+    # config.training.eval_freq = 1
+    # config.training.print_freq = 1
+    # config.eval.num_save_samples = 3
 
     return config

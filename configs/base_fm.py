@@ -11,12 +11,12 @@ def get_fm_config():
     # training
     config.training.method = "flow"
     config.training.matching_method = "ot"
+    config.training.compare_on = "data"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.0
     config.training.matching = False
     config.training.tau_a = 0.0
     config.training.tau_b = 0.0
     config.training.epsilon = 0.0
-    config.training.cond = False
 
     return config

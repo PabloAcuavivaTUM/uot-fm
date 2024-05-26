@@ -1,7 +1,7 @@
 import ml_collections
 
 
-def get_celeba_config(config):
+def get_horse2zebra_config(config):
     config.task = "translation"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.01
@@ -11,12 +11,13 @@ def get_celeba_config(config):
     
     # data
     config.data = data = ml_collections.ConfigDict()
-    data.source = "celeba_attribute"
-    data.target = "celeba_attribute"
-    data.shape = [3, 313, 256]
+    data.source = "horse2zebra"
+    data.target = "horse2zebra"
+    data.shape = [3, 256, 256]
     data.shuffle_buffer = 10_000
-    data.random_crop = True
-    data.crop_shape = [256, 256, 3]
     data.additional_embedding = None
 
+    
+    
+    
     return config

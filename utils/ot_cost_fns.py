@@ -48,7 +48,7 @@ dist_fns = dict(
     l1=lambda x,y: jax.numpy.linalg.norm((x-y.ravel()), ord=1),
     euclidean=lambda x,y: jax.numpy.linalg.norm(((x-y).ravel()), ord=2)**2,
     dot=lambda x,y: jnp.dot(x,y), # Cosine if vectors are normalized
-    cosine = lambda x,y: jnp.dot(x.ravel(),y.ravel()) / (jax.numpy.linalg.norm((y.ravel()), ord=2)*jax.numpy.linalg.norm((x.ravel()), ord=2)),
+    cosine=lambda x,y: jnp.dot(x.ravel(),y.ravel()) / (jax.numpy.linalg.norm((y.ravel()), ord=2)*jax.numpy.linalg.norm((x.ravel()), ord=2)),
     coulomb=lambda x,y: 1 / jnp.max(1e-9, jax.numpy.linalg.norm((x-y).ravel(), ord=2)),
 )
 
@@ -156,19 +156,21 @@ def fmatching(f, X, Y=None,
     else:
         matrix = jax.vmap(lambda x: jax.vmap(lambda y: f(x, y))(Y))(X)
     
-    # Set self-distance-similarity to 0
-    matrix = matrix.at[jnp.arange(matrix.shape[0]), jnp.arange(matrix.shape[0])].set(0)
-    matrix *= dist_mult
+    if Y is None:
+        # Set self-distance-similarity to 0
+        matrix = matrix.at[jnp.arange(matrix.shape[0]), jnp.arange(matrix.shape[0])].set(0)
 
+    
     if softmax:
         # Notice here we are making further away (in distance metrics) have higher score
         # This is to make is similar to how CLIP works (high cosine similarity score for related points)
-        matrix = jax.nn.softmax(matrix, axis=1)  
+        matrix = jax.nn.softmax(matrix * dist_mult, axis=1)  
 
     else:
         # Closer points should have a higher value 
         m = jnp.max(matrix)
         matrix = (m - matrix) / m
+        matrix = jnp.exp(matrix * dist_mult)
     
     
     if top_k is not None:

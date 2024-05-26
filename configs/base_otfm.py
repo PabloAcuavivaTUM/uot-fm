@@ -11,12 +11,12 @@ def get_otfm_config():
     # training
     config.training.method = "flow"
     config.training.matching_method = "ot"
+    config.training.compare_on = "data"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.0
     config.training.matching = True
     config.training.tau_a = 1.0
     config.training.tau_b = 1.0
     config.training.epsilon = 0.01
-    config.training.cond = False
 
     return config
