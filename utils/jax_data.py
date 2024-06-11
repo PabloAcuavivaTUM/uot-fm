@@ -137,10 +137,6 @@ class BatchResampler:
     ) -> Tuple[jax.Array, jax.Array]:
         """Sample data."""
         
-        # print('Resampling')
-        # print("source_batch: ", {k: v.shape for k,v in source_batch.items()})
-        # print("target_batch: ", {k: v.shape for k,v in target_batch.items()})
-    
         resampled_indeces_source, resampled_indeces_target = self.resample(
             key, source_batch[self.compare_on], target_batch[self.compare_on]
         )

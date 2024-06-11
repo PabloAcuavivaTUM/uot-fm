@@ -23,8 +23,6 @@ def jx_device_put(x : Union[jax.Array, 'EasyDict'], shard : jax.sharding.Shardin
     num_devices, *_ = shard.shape
     return jax.device_put(x, shard.reshape(num_devices, *[1 for _ in x.shape[1:]]))
     
-    
-
 class EasyDict(dict):
     """Convenience class that behaves like a dict but allows access with the attribute syntax. If all elemenets are arrays, it also allows for slicing and jnp conversion."""
 

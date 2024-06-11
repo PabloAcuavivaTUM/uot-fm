@@ -215,7 +215,7 @@ class MetricComputer:
                     eval_dict[f"fid_{label}"] = fid_score
                     fid_scores.append(fid_score)
                 if self.return_samples: # ! Notice here we always assume we are in the translation setting for now 
-                    plot_indices = label_indices[:2400]
+                    plot_indices = label_indices[:2400] # ? Is 2400 just hardcoded for any reason or just to get enough images?
                     wb_image = generate_wb_image(samples=samples[plot_indices], 
                                                 inputs=inputs[plot_indices], 
                                                 num_samples=self.num_save_samples,
