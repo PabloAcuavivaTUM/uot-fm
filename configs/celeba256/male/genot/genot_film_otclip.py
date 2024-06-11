@@ -3,6 +3,7 @@ from configs.celeba256.base_unet import get_unet_config
 from configs.celeba256.base_celeba import get_celeba_config
 from configs.celeba256.male.base_male import get_male_config
 
+# ! IGNORE - OUTDATED CONFIGURATION SCHEMA
 
 def get_config():
     config = get_uotfm_config()

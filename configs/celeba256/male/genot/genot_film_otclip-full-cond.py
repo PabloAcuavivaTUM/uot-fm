@@ -22,8 +22,8 @@ def get_config():
     config.data.additional_embedding = "clip"
     config.model.film_cond_dim = 512
     
-    config.model.film_resolutions_down = [i for i in range(200)]
-    config.model.film_resolutions_up = [i for i in range(200)]
+    config.model.film_resolutions_down = [i for i in range(200)] # This could be 4, 8, 16, 32 
+    config.model.film_resolutions_up = [i for i in range(200)]   # This could be 4, 8, 16, 32
     config.model.film_down = [True, True, True, True] 
     config.model.film_up = [True, True, True, True, True],
     config.model.film_middle = [True, True]
