@@ -16,6 +16,7 @@ def get_config():
     config.name = "celeba256-add-glasses-TestRun"
     config.wandb_group = "ignore"
 
+    # config.training.is_genot = True 
     ########
     config.overfit_to_one_batch = True
     config.training.num_steps = 2

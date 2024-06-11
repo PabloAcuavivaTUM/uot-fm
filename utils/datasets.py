@@ -124,7 +124,8 @@ def get_data(
             shard,
             vae_encode_fn,
             preprocess_fn,
-            additional_embedding=config.data.additional_embedding
+            additional_embedding=config.data.additional_embedding,
+            nsamples=config.data.get("nsamples", None),
         )
         eval_source, eval_target = celeba_attribute(
             "test",
@@ -135,7 +136,8 @@ def get_data(
             shard,
             vae_encode_fn,
             preprocess_fn,
-            additional_embedding=config.data.additional_embedding
+            additional_embedding=config.data.additional_embedding,
+            nsamples=config.data.get("nsamples", None),
         )
     elif config.data.target == "horse2zebra":
         train_source, train_target = horse2zebra(

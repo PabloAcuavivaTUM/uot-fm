@@ -13,15 +13,20 @@ def get_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-    config.name = "celeba256-add-glasses-NoCond-otclip"
+    # Same config as II just adding more tranining steps
+    config.name = "celeba256-add-glasses-NoCond-otclip-II"
     config.wandb_group = "cond"
 
     config.data.additional_embedding = "clip"
     
-    
-    config.training.matching_method = "softmax_dist"
+    # OT-Distance
+    # config.training.matching_method = "softmax_dist"
     config.training.compare_on = "embedding"
     config.training.ot_cost_fn = "cosine"
+
+    
+    # Extra from I -> II
+    config.training.num_steps = 200_000
 
     ########
     # config.overfit_to_one_batch = True

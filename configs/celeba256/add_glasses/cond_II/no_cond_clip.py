@@ -13,8 +13,9 @@ def get_config():
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-    config.name = "celeba256-add-glasses-NoCond-softmax_clip-Top*"
+    config.name = "celeba256-add-glasses-NoCond-softmax_clip-Top4-Freq"
     config.wandb_group = "cond"
+    config.training.eval_freq = 5000
 
     config.data.additional_embedding = "clip"
     

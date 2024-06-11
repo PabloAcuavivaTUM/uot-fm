@@ -40,7 +40,11 @@ def get_model(
             ###
             cross_attn_resolutions=config.model.cross_attn_resolutions,
             cross_attn_dim=config.model.cross_attn_dim,
-            film_resolutions=config.model.film_resolutions,
+            film_resolutions_down=config.model.film_resolutions_down,
+            film_resolutions_up=config.model.film_resolutions_up, 
+            film_down=config.model.film_down,
+            film_up=config.model.film_up,
+            film_middle=config.model.film_middle,
             film_cond_dim=config.model.film_cond_dim, 
             ###
             key=model_key,

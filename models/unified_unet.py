@@ -201,7 +201,8 @@ class ResnetBlock(eqx.Module):
     time_emb_dim: int
     mlp_layers: list[Union[Callable, eqx.nn.Linear]]
     scaling: Union[None, Callable, eqx.nn.ConvTranspose2d, eqx.nn.Conv2d]
-    block1_groupnorm: eqx.nn.GroupNorm
+    block1_groupnorm: Optional[eqx.nn.GroupNorm]
+    block1_layernorm : Optional[eqx.nn.LayerNorm]
     block1_conv: eqx.nn.Conv2d
     block2_layers: list[
         Union[eqx.nn.GroupNorm, eqx.nn.Dropout, eqx.nn.Conv2d, Callable]
@@ -235,6 +236,8 @@ class ResnetBlock(eqx.Module):
         film_cond_dim,
         is_cross_attn,
         cross_attn_dim,
+        h, 
+        w, 
         *,
         key,
         
@@ -265,9 +268,17 @@ class ResnetBlock(eqx.Module):
             jax.nn.silu,
             eqx.nn.Linear(time_emb_dim, dim_out, key=main_block_keys[0]),
         ]
-
-        self.block1_groupnorm = eqx.nn.GroupNorm(min(max(1, dim_in // 4), 32), dim_in)
         
+        # 2nd Test remove
+        if is_film:
+            self.block1_layernorm = None # eqx.nn.LayerNorm((256, h,w))
+            # self.block1_groupnorm = None
+        else:
+            self.block1_layernorm = None 
+        
+        self.block1_groupnorm = eqx.nn.GroupNorm(min(max(1, dim_in // 4), 32), dim_in)
+
+            
         self.block1_conv = eqx.nn.Conv2d(dim_in, dim_out, 3, padding=1, key=main_block_keys[1])
         
         self.block2_layers = [
@@ -346,19 +357,46 @@ class ResnetBlock(eqx.Module):
         # code, the biggan approach is taken for both.
         # norm -> nonlinearity -> up/downsample -> conv follows Yang
         # https://github.dev/yang-song/score_sde/blob/main/models/layerspp.py
- 
+
+        # 1st Way to do it. Almost everything is done that way (Minimal changes)
         h = self.block1_groupnorm(x)
         if self.film is not None:
             h = self.film(h, cond=film_cond)
+
+        # Trials different ways
+        # 2nd
+
+        # if self.film is None:
+        #     h = self.block1_groupnorm(x)
+        # else:
+        #     h = self.block1_layernorm(x)
+        #     h = self.film(h, cond=film_cond)
+
+
         h = jax.nn.silu(h)
+        # 3rd Way, after SILU normalization 
+        # if self.film is not None:
+        #     h = self.film(h, cond=film_cond)
+
+
         if self.up or self.down:
             h = self.scaling(h)  # pyright: ignore
             x = self.scaling(x)  # pyright: ignore
         h = self.block1_conv(h)
 
+        # 4rd Way, after block_comb normalization (Probably not that much sense as there is a ormalization just after, but it is a GroupNorm...) 
+        # if self.film is not None:
+        #     h = self.film(h, cond=film_cond)
+
+
         for layer in self.mlp_layers:
             t = layer(t)
         h = h + t[..., None, None]
+
+        # # 5th 
+        # if self.film is not None:
+        #     h = self.film(h, cond=film_cond)
+
         for layer in self.block2_layers:
             # Precisely 1 dropout layer in block2_layers which requires a key.
             if isinstance(layer, eqx.nn.Dropout):
@@ -401,7 +439,11 @@ class UNet(eqx.Module):
         dropout_rate: float,
         num_res_blocks: int,
         attn_resolutions: list[int],
-        film_resolutions: list[int],
+        film_resolutions_up : list[int],
+        film_resolutions_down : list[int],
+        film_down: list[bool],
+        film_up: list[bool],
+        film_middle: list[bool],
         film_cond_dim : int, 
         cross_attn_resolutions : list[int], 
         cross_attn_dim : int,  
@@ -438,7 +480,7 @@ class UNet(eqx.Module):
         i = 0
         for ind, (dim_in, dim_out) in enumerate(in_out):            
             is_attn = (h in attn_resolutions and w in attn_resolutions)
-            is_film = (h in film_resolutions and w in film_resolutions)
+            is_film_resolution = (h in film_resolutions_down and w in film_resolutions_down)
             is_cross_attn = (h in cross_attn_resolutions and w in cross_attn_resolutions)
             
             res_blocks = [
@@ -453,15 +495,17 @@ class UNet(eqx.Module):
                     is_attn=is_attn,
                     heads=heads,
                     dim_head=dim_head,                    
-                    is_film=is_film,
+                    is_film=is_film_resolution and film_down[0],
                     film_cond_dim=film_cond_dim,
                     is_cross_attn=is_cross_attn,
                     cross_attn_dim=cross_attn_dim,
                     key=keys_resblock[i],
+                    h=h,
+                    w=w,
                 )
             ]
             i += 1
-            for _ in range(num_res_blocks - 2):
+            for i_res_block in range(num_res_blocks - 2):
                 res_blocks.append(
                     ResnetBlock(
                         dim_in=dim_out,
@@ -474,14 +518,17 @@ class UNet(eqx.Module):
                         is_attn=is_attn,
                         heads=heads,
                         dim_head=dim_head,
-                        is_film=is_film,
+                        is_film=is_film_resolution and film_down[i_res_block+1],
                         film_cond_dim=film_cond_dim,
                         is_cross_attn=is_cross_attn,
                         cross_attn_dim=cross_attn_dim,
                         key=keys_resblock[i],
+                        h=h,
+                        w=w,
                     )
                 )
                 i += 1
+
             if ind < (len(in_out) - 1):
                 res_blocks.append(
                     ResnetBlock(
@@ -495,11 +542,13 @@ class UNet(eqx.Module):
                         is_attn=is_attn,
                         heads=heads,
                         dim_head=dim_head,
-                        is_film=is_film,
+                        is_film=is_film_resolution and film_down[num_res_blocks-1],
                         film_cond_dim=film_cond_dim,
                         is_cross_attn=is_cross_attn,
                         cross_attn_dim=cross_attn_dim,
                         key=keys_resblock[i],
+                        h=h, 
+                        w=w,
                     )
                 )
                 i += 1
@@ -508,7 +557,6 @@ class UNet(eqx.Module):
         assert i == num_keys
 
         mid_dim = dims[-1]
-        # TODO: Decide how to deal with mid block for FiLM & CrossAttnt, for now off.
         self.mid_block1 = ResnetBlock(
             dim_in=mid_dim,
             dim_out=mid_dim,
@@ -520,11 +568,13 @@ class UNet(eqx.Module):
             is_attn=True,
             heads=heads,
             dim_head=dim_head,
-            is_film=False,
+            is_film=film_middle[0],
             film_cond_dim=film_cond_dim,
             is_cross_attn=False,
             cross_attn_dim=cross_attn_dim,
             key=keys[3],
+            h=h,
+            w=w,
         )
         self.mid_block2 = ResnetBlock(
             dim_in=mid_dim,
@@ -537,11 +587,13 @@ class UNet(eqx.Module):
             is_attn=False,
             heads=heads,
             dim_head=dim_head,
-            is_film=False,
+            is_film=film_middle[1],
             film_cond_dim=film_cond_dim,
             is_cross_attn=False,
             cross_attn_dim=cross_attn_dim,
             key=keys[4],
+            h=h,
+            w=w, 
         )
 
         self.ups_res_blocks = []
@@ -550,11 +602,11 @@ class UNet(eqx.Module):
         i = 0
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_attn = (h in attn_resolutions and w in attn_resolutions)
-            is_film = (h in film_resolutions and w in film_resolutions)
+            is_film_resolution = (h in film_resolutions_up and w in film_resolutions_up)
             is_cross_attn = (h in cross_attn_resolutions and w in cross_attn_resolutions)
             
             res_blocks = []
-            for _ in range(num_res_blocks - 1):
+            for i_res_block in range(num_res_blocks - 1):
                 res_blocks.append(
                     ResnetBlock(
                         dim_in=dim_out * 2,
@@ -567,11 +619,13 @@ class UNet(eqx.Module):
                         is_attn=is_attn,
                         heads=heads,
                         dim_head=dim_head,
-                        is_film=is_film,
+                        is_film=is_film_resolution and film_up[0],
                         film_cond_dim=film_cond_dim,
                         is_cross_attn=is_cross_attn,
                         cross_attn_dim=cross_attn_dim,
                         key=keys_resblock[i],
+                        h=h,
+                        w=w,
                     )
                 )
                 i += 1
@@ -588,10 +642,12 @@ class UNet(eqx.Module):
                     heads=heads,
                     dim_head=dim_head,
                     key=keys_resblock[i],
-                    is_film=is_film,
+                    is_film=is_film_resolution and film_up[i_res_block+1],
                     film_cond_dim=film_cond_dim,
                     is_cross_attn=is_cross_attn,
                     cross_attn_dim=cross_attn_dim,
+                    h=h,
+                    w=w,
                 )
             )
             i += 1
@@ -608,11 +664,13 @@ class UNet(eqx.Module):
                         is_attn=is_attn,
                         heads=heads,
                         dim_head=dim_head,
-                        is_film=is_film,
+                        is_film=is_film_resolution and film_up[num_res_blocks],
                         film_cond_dim=film_cond_dim,
                         is_cross_attn=is_cross_attn,
                         cross_attn_dim=cross_attn_dim,
                         key=keys_resblock[i],
+                        h=h,
+                        w=w, 
                     )
                 )
                 i += 1

@@ -20,6 +20,7 @@ def get_loss_builder(config: ConfigDict):
             gamma=config.training.gamma,
             weight=lambda t: 1.0,
             solver=config.solver,
+            is_genot=config.training.is_genot
         )
     elif config.training.method == "flow-vp-matching":
         raise NotImplementedError

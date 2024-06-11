@@ -108,6 +108,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             sample_fn=sample_fn,
             vae_encode_fn=vae_encode_fn,
             vae_decode_fn=vae_decode_fn,
+            is_genot=config.training.is_genot
         )
         if config.training.save_checkpoints:
             # create checkpoint manager
@@ -234,6 +235,20 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                         combined_model,
                         metrics=eval_dict[config.eval.checkpoint_metric],
                     )
+                    ###
+                    # Add a pickled copied of the model weights
+                    #
+                    import pickle 
+                    check_folder = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
+                    os.makedirs(check_folder, exist_ok=True)
+
+                    params_comb, __static = eqx.partition(model, eqx.is_array)
+                    with open(os.path.join(check_folder, f'params{step}.pkl'), 'wb') as f:
+                        pickle.dump(params_comb, f)
+                    ### 
+
+
+
         if config.training.preemption_ckpt and step % config.training.ckpt_freq == 0:
             preemption_ckpt_mngr.save(
                 step,

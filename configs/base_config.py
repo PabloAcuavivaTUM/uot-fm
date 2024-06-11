@@ -23,6 +23,7 @@ def get_base_config():
     training.preemption_ckpt = False
     training.ckpt_freq = 10000
     training.resume_ckpt = False
+    training.is_genot = False
 
     config.eval = eval = ml_collections.ConfigDict()
     eval.compute_metrics = True
