@@ -24,7 +24,7 @@ def get_unet_config(config):
     model.film_resolutions_down = []
     model.film_resolutions_up = []
     model.film_down = [False, False, False, False] 
-    model.film_up = [False, False, False, False, False],
+    model.film_up = [False, False, False, False, False]
     model.film_middle = [False, False]
     model.film_cond_dim = 0
 
