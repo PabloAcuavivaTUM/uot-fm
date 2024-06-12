@@ -236,16 +236,22 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                         metrics=eval_dict[config.eval.checkpoint_metric],
                     )
                     ###
-                    # Add a pickled copied of the model weights
-                    #
-                    import pickle 
-                    check_folder = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
-                    os.makedirs(check_folder, exist_ok=True)
-
+                    # Add a pickled & serialized copied of the model weights
                     params_comb, __static = eqx.partition(model, eqx.is_array)
-                    with open(os.path.join(check_folder, f'params{step}.pkl'), 'wb') as f:
+
+                    # pickled
+                    import pickle 
+                    check_folder_pickle = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
+                    os.makedirs(check_folder_pickle, exist_ok=True)
+                    with open(os.path.join(check_folder_pickle, f'params{step}.pkl'), 'wb') as f:
                         pickle.dump(params_comb, f)
-                    ### 
+                     
+                    # serialized
+                    check_folder_tree = f"{os.getcwd()}/{workdir}/{config.name}/tree_checkpoints"
+                    os.makedirs(check_folder_tree, exist_ok=True)
+
+                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"params{step}.eqx"), params_comb)
+                    ###
 
 
 

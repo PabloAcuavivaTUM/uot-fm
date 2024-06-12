@@ -19,7 +19,8 @@ def get_unet_config(config):
 
     # conditioning
     model.cross_attn_resolutions = []
-    model.cross_attn_dim = model.input_shape[0]
+    # Force it to throw error if trying to use cross_attn with empty resolutions
+    model.cross_attn_dim = 0 # model.input_shape[0]
 
     model.film_resolutions_down = []
     model.film_resolutions_up = []

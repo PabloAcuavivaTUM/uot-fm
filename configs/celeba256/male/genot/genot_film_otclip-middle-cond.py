@@ -25,7 +25,7 @@ def get_config():
     config.model.film_resolutions_down = []
     config.model.film_resolutions_up = []
     config.model.film_down = [False, False, False, False] 
-    config.model.film_up = [False, False, False, False, False],
+    config.model.film_up = [False, False, False, False, False]
     config.model.film_middle = [True, True]
     
 

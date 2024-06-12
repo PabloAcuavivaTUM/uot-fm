@@ -25,7 +25,7 @@ def get_config():
     config.model.film_resolutions_down = [i for i in range(200)] # This could be 4, 8, 16, 32 
     config.model.film_resolutions_up = [i for i in range(200)]   # This could be 4, 8, 16, 32
     config.model.film_down = [True, True, True, True] 
-    config.model.film_up = [True, True, True, True, True],
+    config.model.film_up = [True, True, True, True, True]
     config.model.film_middle = [True, True]
 
     config.training.compare_on = "embedding"
