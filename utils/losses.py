@@ -10,6 +10,58 @@ import optax
 from ml_collections import ConfigDict
 
 from .miscellaneous import EasyDict
+from functools import reduce
+
+# Two low dimensional matrices AA^T
+# Fix rn_positions  
+
+from typing import Optional 
+
+
+# rn_positions = jr.choice(key=key_choice, a=jnp.arange(independent_terms), shape=(n,))
+
+# N(0, SIGMA = AA^T))
+
+# N(0, I) -> SVD -> Taking biggest singular values ->
+
+def get_correlated_multivariate_normal_fn(n, independent_terms, key):
+    rn_positions = jr.choice(key=key, a=jnp.arange(independent_terms), shape=(n,))
+    def correlated_multivariate_normal(key : jr.KeyArray, shape : Tuple[int]):
+        rn = jr.normal(key=key, shape=(independent_terms,))
+        return rn[rn_positions].reshape(shape[1:])
+    
+    return jax.jit(correlated_multivariate_normal, static_argnums=(1,))
+####
+
+
+src_noises = dict(gaussian=jr.normal,
+                    chisquare=lambda key, shape: jr.chisquare(df=1, key=key, shape=shape) - 1,
+                    uniform=lambda key, shape: jr.uniform(key=key, shape=shape) - 0.5, 
+                    exponential=lambda key, shape: jr.exponential(key=key, shape=shape) - 1, 
+                    beta33=lambda key, shape: jr.beta(a=3,b=3, key=key, shape=shape) - 0.5, 
+                    beta55=lambda key, shape: jr.beta(a=5,b=5, key=key, shape=shape) - 0.5, 
+                    beta27=lambda key, shape: jr.beta(a=2,b=7, key=key, shape=shape)  - 2 / 7,
+                    # gaussian_rank_sqrt=lambda key,shape: jnp.stack(
+                    #                         [
+                    #                             correlated_multivariate_normal(n=reduce(lambda x,y: x*y, shape[1:]),
+                    #                                                 key=key, 
+                    #                                                 independent_terms=int(reduce(lambda x,y: x*y, shape[1:])**(1/2)),
+                    #                                                 ).reshape(shape[1:])
+                    #                             for _ in range(shape[0])
+                    #                         ]
+                    #                     ),
+                    # gaussian_rank_tenth=lambda key,shape: jnp.stack(
+                    #                         [
+                    #                             correlated_multivariate_normal(n=reduce(lambda x,y: x*y, shape[1:]),
+                    #                                                 key=key, 
+                    #                                                 independent_terms=reduce(lambda x,y: x*y, shape[1:]) // 10,
+                    #                                                 ).reshape(shape[1:])
+                    #                             for _ in range(shape[0])
+                    #                         ]
+                    #                     ),
+     )
+
+
 
 def get_loss_builder(config: ConfigDict):
     if config.training.method == "flow":
@@ -20,7 +72,9 @@ def get_loss_builder(config: ConfigDict):
             gamma=config.training.gamma,
             weight=lambda t: 1.0,
             solver=config.solver,
-            is_genot=config.training.is_genot
+            is_genot=config.training.is_genot,
+            genot=config.training.genot,
+            key=jr.PRNGKey(config.seed),
         )
     elif config.training.method == "flow-vp-matching":
         raise NotImplementedError
@@ -106,8 +160,13 @@ class FlowMatching:
         flow_sigma: Optional[float] = 0.1,
         weight: Optional[Callable[[float], float]] = lambda t: 1.0,
         solver: str = "tsit5",
-        is_genot : bool = False 
+        is_genot : bool = False,
+        genot : ConfigDict = None,  # Genot configuration 
+        key = None,
     ):
+        genot = genot or ConfigDict() # ! WARNING Will throw error when accessing .noise
+
+        
         self.t1 = t1
         self.t0 = t0
         self.dt0 = dt0
@@ -116,6 +175,19 @@ class FlowMatching:
         self.weight = weight
         self.solver = solver
         self.is_genot = is_genot
+        self.genot = genot
+        if self.genot:
+            if self.genot.noise in src_noises:
+                self.noise_genot = src_noises[self.genot.noise]
+            elif self.genot.noise == 'low_rank_normal':
+                self.noise_genot = get_correlated_multivariate_normal_fn(self.genot.n, 
+                                                                         self.genot.gaussian_indepedendent_terms, 
+                                                                         key,
+                                                                         )
+            else:
+                raise ValueError(f'Invalid genot noise {self.genot.noise} given.')
+        else:
+            self.noise_genot = None 
 
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
@@ -152,14 +224,22 @@ class FlowMatching:
             
             if self.is_genot:
                 key, subkey = jr.split(key, 2)
-                src_data = jr.normal(subkey, shape=x1.data.shape)
+                src_data = self.noise_genot(subkey, shape=x1.data.shape)
+                
+                # Generating back conditioning x0 (to push towards keeping features)
+                key, subkey = jr.split(key, 2)
+                tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
+                                        lambda: x0.data, 
+                                        lambda: x1.data,
+                                        )
             else:
                 src_data = x0.data
+                tgt_data = x1.data
 
             noise_xt = jr.normal(key, x1.data.shape)
             
-            u_t = self.compute_flow(x1.data, src_data)
-            x_t = self.sample_xt(x1.data, src_data, t, noise_xt)
+            u_t = self.compute_flow(tgt_data, src_data)
+            x_t = self.sample_xt(tgt_data, src_data, t, noise_xt)
 
             # TODO: If we change cross_attn_cond for something different than the VAE / Original image modify this
             film_cond = x0.get("embedding", None)
@@ -247,7 +327,7 @@ class FlowMatching:
                 dt0 = self.dt0
             
             if self.is_genot:
-                src_data = jr.normal(key, shape=x0.data.shape)
+                src_data = self.noise_genot(key, shape=x0.data.shape)
             else:
                 src_data = x0.data
 

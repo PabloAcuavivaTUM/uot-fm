@@ -235,8 +235,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                         combined_model,
                         metrics=eval_dict[config.eval.checkpoint_metric],
                     )
+                    
                     ###
-                    # Add a pickled & serialized copied of the model weights
+                    # Add pickled & serialized copied of model weights
                     params_comb, __static = eqx.partition(model, eqx.is_array)
 
                     # pickled
