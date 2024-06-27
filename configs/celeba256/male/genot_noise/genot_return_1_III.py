@@ -10,7 +10,7 @@ def get_config():
     config = get_celeba_config(config)
     config = get_male_config(config)
 
-    config.training.num_steps = 200_000
+    config.training.num_steps = 400_000
     
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95

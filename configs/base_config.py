@@ -24,6 +24,9 @@ def get_base_config():
     training.ckpt_freq = 10000
     training.resume_ckpt = False
     training.is_genot = False
+    training.genot = genot = ml_collections.ConfigDict()
+    genot.noise = 'gaussian'
+    genot.x0_prob = 0.0
 
     config.eval = eval = ml_collections.ConfigDict()
     eval.compute_metrics = True

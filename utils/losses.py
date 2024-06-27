@@ -179,7 +179,7 @@ class FlowMatching:
         if self.genot:
             if self.genot.noise in src_noises:
                 self.noise_genot = src_noises[self.genot.noise]
-            elif self.genot.noise == 'low_rank_normal':
+            elif self.genot.noise == 'low_rank_gaussian':
                 self.noise_genot = get_correlated_multivariate_normal_fn(self.genot.n, 
                                                                          self.genot.gaussian_indepedendent_terms, 
                                                                          key,

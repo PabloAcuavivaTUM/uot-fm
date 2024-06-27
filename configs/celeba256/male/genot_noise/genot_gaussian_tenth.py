@@ -10,17 +10,20 @@ def get_config():
     config = get_celeba_config(config)
     config = get_male_config(config)
 
-    config.training.num_steps = 600_000
+    config.training.num_steps = 400_000
     
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-    genot_src_noise = "gaussian_rank_tenth"
+    genot_src_noise = "low_rank_gaussian"
+    d = 10 
 
-    config.name = f"celeba256-male-genot-otclip-fillfull-{genot_src_noise}"
+    config.name = f"celeba256-male-genot-otclip-fillfull-{genot_src_noise}-D{d}"
     config.wandb_group = "genot"
     config.training.is_genot = True
     config.training.genot.noise = genot_src_noise
+    config.training.genot.n = config.model.input_shape[0] * config.model.input_shape[1] * config.model.input_shape[2]
+    config.training.genot.gaussian_indepedendent_terms = config.training.genot.n // d
 
     # config.model.cross_attn_resolutions = [16]
     # config.model.cross_attn_dim = config.model.input_shape[0]
