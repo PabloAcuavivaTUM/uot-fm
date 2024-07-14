@@ -8,9 +8,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 from ml_collections import ConfigDict
-
 from .miscellaneous import EasyDict
-from functools import reduce
+from functools import reduce, partial
+from copy import deepcopy
 
 # Two low dimensional matrices AA^T
 # Fix rn_positions  
@@ -26,39 +26,38 @@ from typing import Optional
 
 def get_correlated_multivariate_normal_fn(n, independent_terms, key):
     rn_positions = jr.choice(key=key, a=jnp.arange(independent_terms), shape=(n,))
-    def correlated_multivariate_normal(key : jr.KeyArray, shape : Tuple[int]):
+    def correlated_multivariate_normal(key : jr.KeyArray, shape : Tuple[int, ...]):
         rn = jr.normal(key=key, shape=(independent_terms,))
-        return rn[rn_positions].reshape(shape[1:])
+        return rn[rn_positions].reshape(shape)
     
     return jax.jit(correlated_multivariate_normal, static_argnums=(1,))
-####
+
+def correlated_multivariate_normal_matrix_fn(key : jr.KeyArray, shape : Tuple[int, ...] , rank : int = 100):
+    m = shape[0]*shape[1]*shape[2] 
+    A = jax.random.uniform(key, shape=(m, rank))
+    # cov = jnp.matmul(A, A.T) 
+    # cov = cov.at[jnp.diag_indices(m)].set(1)
+    
+    rn = jax.random.normal(key, shape=(rank,))
+    
+    return (A@rn).reshape(shape)
 
 
 src_noises = dict(gaussian=jr.normal,
+                  gaussian01=lambda key, shape: 0.1*jr.normal(shape=shape, key=key),
+                  gaussian05=lambda key, shape: 0.5*jr.normal(shape=shape, key=key),
+                  gaussian1p2=lambda key, shape: 1.2*jr.normal(shape=shape, key=key),
+                  gaussian1p5=lambda key, shape: 1.5*jr.normal(shape=shape, key=key),
+                  gaussian2=lambda key, shape: 2*jr.normal(shape=shape, key=key),
                     chisquare=lambda key, shape: jr.chisquare(df=1, key=key, shape=shape) - 1,
-                    uniform=lambda key, shape: jr.uniform(key=key, shape=shape) - 0.5, 
+                    uniform=lambda key, shape: 2*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1,1] 
+                    uniform1p5=lambda key, shape: 3*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1.5,1.5]
+                    uniform2=lambda key, shape: 4*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2,2] 
+                    uniform2p5=lambda key, shape: 5*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2.5,2.5] 
                     exponential=lambda key, shape: jr.exponential(key=key, shape=shape) - 1, 
                     beta33=lambda key, shape: jr.beta(a=3,b=3, key=key, shape=shape) - 0.5, 
                     beta55=lambda key, shape: jr.beta(a=5,b=5, key=key, shape=shape) - 0.5, 
                     beta27=lambda key, shape: jr.beta(a=2,b=7, key=key, shape=shape)  - 2 / 7,
-                    # gaussian_rank_sqrt=lambda key,shape: jnp.stack(
-                    #                         [
-                    #                             correlated_multivariate_normal(n=reduce(lambda x,y: x*y, shape[1:]),
-                    #                                                 key=key, 
-                    #                                                 independent_terms=int(reduce(lambda x,y: x*y, shape[1:])**(1/2)),
-                    #                                                 ).reshape(shape[1:])
-                    #                             for _ in range(shape[0])
-                    #                         ]
-                    #                     ),
-                    # gaussian_rank_tenth=lambda key,shape: jnp.stack(
-                    #                         [
-                    #                             correlated_multivariate_normal(n=reduce(lambda x,y: x*y, shape[1:]),
-                    #                                                 key=key, 
-                    #                                                 independent_terms=reduce(lambda x,y: x*y, shape[1:]) // 10,
-                    #                                                 ).reshape(shape[1:])
-                    #                             for _ in range(shape[0])
-                    #                         ]
-                    #                     ),
      )
 
 
@@ -161,7 +160,7 @@ class FlowMatching:
         weight: Optional[Callable[[float], float]] = lambda t: 1.0,
         solver: str = "tsit5",
         is_genot : bool = False,
-        genot : ConfigDict = None,  # Genot configuration 
+        genot : Optional[ConfigDict] = None,  # Genot configuration 
         key = None,
     ):
         genot = genot or ConfigDict() # ! WARNING Will throw error when accessing .noise
@@ -175,20 +174,33 @@ class FlowMatching:
         self.weight = weight
         self.solver = solver
         self.is_genot = is_genot
-        self.genot = genot
+        
+        # Clean up a bit
+        self.genot = deepcopy(genot)
+
         if self.genot:
+            if 'x0_plus_' in self.genot.noise:
+                self.genot.noise = self.genot.noise[8:] # Remove x0_plus
+                self.x0_plus_noise = True
+            else:
+                self.x0_plus_noise = False
+
             if self.genot.noise in src_noises:
                 self.noise_genot = src_noises[self.genot.noise]
             elif self.genot.noise == 'low_rank_gaussian':
                 self.noise_genot = get_correlated_multivariate_normal_fn(self.genot.n, 
-                                                                         self.genot.gaussian_indepedendent_terms, 
+                                                                         self.genot.gaussian_independent_terms, 
                                                                          key,
                                                                          )
+            elif self.genot.noise == 'low_rank_gaussian_matrix':
+                self.noise_genot = partial(correlated_multivariate_normal_matrix_fn, 
+                                       rank=self.genot.gaussian_independent_terms,
+                                       ) 
             else:
                 raise ValueError(f'Invalid genot noise {self.genot.noise} given.')
         else:
-            self.noise_genot = None 
-
+            self.noise_genot = None
+            
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
         return x1 - x0
@@ -224,8 +236,7 @@ class FlowMatching:
             
             if self.is_genot:
                 key, subkey = jr.split(key, 2)
-                src_data = self.noise_genot(subkey, shape=x1.data.shape)
-                
+                src_data = self.noise_genot(subkey, shape=x1.data.shape)                
                 # Generating back conditioning x0 (to push towards keeping features)
                 key, subkey = jr.split(key, 2)
                 tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
@@ -246,6 +257,11 @@ class FlowMatching:
             cross_attn_cond=x0.data
             ###
 
+            # Notice this is only for is_genot but we need to do it later so that u_t & x_t are properly calculated
+            # the self.is_genot is redundant, but we leave it for clarity
+            if self.is_genot and self.x0_plus_noise:
+                x_t = jnp.concatenate((x_t, x0.data), axis=0)
+            
             pred = model(t, x_t, 
                          film_cond=film_cond, 
                          cross_attn_cond=cross_attn_cond, 
@@ -304,6 +320,11 @@ class FlowMatching:
             def func(t, x_t, args, x0=x0): 
                 film_cond = x0.get("embedding", None)
                 cross_attn_cond=x0.data
+                
+                if self.is_genot and self.x0_plus_noise:
+                    x_t = jnp.concatenate((x_t, x0.data), axis=0)
+
+                
                 return model(t, x_t, 
                             film_cond=film_cond, 
                             cross_attn_cond=cross_attn_cond, 

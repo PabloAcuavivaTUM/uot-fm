@@ -430,7 +430,8 @@ class UNet(eqx.Module):
     final_conv_layers: list[Union[Callable, eqx.nn.LayerNorm, eqx.nn.Conv2d]]
     def __init__(
         self,
-        data_shape: tuple[int, int, int],
+        in_data_shape: tuple[int, int, int],
+        out_data_shape: tuple[int, int, int],
         is_biggan: bool,
         dim_mults: list[int],
         hidden_size: int,
@@ -452,8 +453,13 @@ class UNet(eqx.Module):
     ):
         keys = jax.random.split(key, 7)
         del key
+    
+        if not (in_data_shape[1] == out_data_shape[1]) and (in_data_shape[2] == out_data_shape[2]):
+            raise ValueError("H,W for input and output must be the same! One can only change the number of channels.")
+        
 
-        data_channels, in_height, in_width = data_shape
+        in_data_channels, in_height, in_width = in_data_shape
+        out_data_channels, _, _ = out_data_shape
 
         dims = [hidden_size] + [hidden_size * m for m in dim_mults]
         in_out = list(exact_zip(dims[:-1], dims[1:]))
@@ -469,7 +475,7 @@ class UNet(eqx.Module):
         )
         
         self.first_conv = eqx.nn.Conv2d(
-            data_channels, hidden_size, kernel_size=3, padding=1, key=keys[1]
+            in_data_channels, hidden_size, kernel_size=3, padding=1, key=keys[1]
         )
 
         h, w = in_height, in_width
@@ -682,7 +688,7 @@ class UNet(eqx.Module):
         self.final_conv_layers = [
             eqx.nn.GroupNorm(min(hidden_size // 4, 32), hidden_size),
             jax.nn.silu,
-            eqx.nn.Conv2d(hidden_size, data_channels, 1, key=keys[6]),
+            eqx.nn.Conv2d(hidden_size, out_data_channels, 1, key=keys[6]),
         ]
 
     def __call__(self, t, x_t, film_cond, cross_attn_cond, *, key=None):

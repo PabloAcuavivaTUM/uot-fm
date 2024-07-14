@@ -56,10 +56,10 @@ def get_preprocess_fn(ds_name: str) -> Callable[[np.ndarray], tf.Tensor]:
 
 def compute_fid_reference_stats(batch_size: int):
     batch_size = 256 # TODO: HARDCODED - Make it available through console. 
-    compute_fid_emnist = False 
+    compute_fid_emnist = False
     compute_fid_cifar10 = False
-    compute_fid_celeba = False
-    compute_fid_horse2zebra = True 
+    compute_fid_celeba = True
+    compute_fid_horse2zebra = False 
     #####################
     logger = logging.getLogger()
     logger.setLevel("INFO")
@@ -97,7 +97,7 @@ def compute_fid_reference_stats(batch_size: int):
         sigma = jnp.cov(inception_acts, rowvar=False)
         np.savez(f"assets/stats/emnist_letters.npz", mu=mu, sigma=sigma)
         _, dataset = emnist("full")
-        dataset, labels = dataset.data, dataset.labels
+        dataset, labels = dataset.data, dataset.label
         for label in [0, 1, 2]:
             logging.info(f"Computing reference statistics for emnist, label {label}")
             sub_dataset = dataset[np.array(labels[:, label], dtype=bool)]
@@ -128,26 +128,27 @@ def compute_fid_reference_stats(batch_size: int):
     # compute celeba256 stats
     if compute_fid_celeba:
         celeba_attribute_dict = {
-            "male": {
-                "attribute_id": 20,
-                "map_forward": True,
-                "subset_attributes": [15, 17, 35],
-            },
+            # TODO: HARDCODED: Remove comments to calculate all of them
+            # "male": {
+            #     "attribute_id": 20,
+            #     "map_forward": True,
+            #     "subset_attributes": [15, 17, 35],
+            # },
             "female": {
                 "attribute_id": 20,
                 "map_forward": False,
                 "subset_attributes": [15, 17, 35],
             },
-            "add-glasses": {
-                "attribute_id": 15,
-                "map_forward": True,
-                "subset_attributes": [17, 20, 201, 35],
-            },
-            "remove-glasses": {
-                "attribute_id": 15,
-                "map_forward": False,
-                "subset_attributes": [17, 20, 201, 35],
-            },
+            # "add-glasses": {
+            #     "attribute_id": 15,
+            #     "map_forward": True,
+            #     "subset_attributes": [17, 20, 201, 35],
+            # },
+            # "remove-glasses": {
+            #     "attribute_id": 15,
+            #     "map_forward": False,
+            #     "subset_attributes": [17, 20, 201, 35],
+            # },
         }
         for name, data_args in celeba_attribute_dict.items():
             subset_attributes = data_args.pop("subset_attributes")

@@ -1,5 +1,6 @@
 import logging
 import os
+import json 
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 
@@ -67,6 +68,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     if config.training.matching:
         batch_resampler = BatchResampler(
             batch_size=batch_size,
+            batch_size_matching=config.training.batch_size_matching, 
             tau_a=config.training.tau_a,
             tau_b=config.training.tau_b,
             epsilon=config.training.epsilon,
@@ -75,6 +77,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             geometry_cost_matrix_kwargs=config.training.geometry_cost_matrix_kwargs, 
             matching_method=config.training.matching_method,
             compare_on=config.training.compare_on,
+            pointcloud_batch_size=config.training.pointcloud_batch_size,
         )
 
     # build model and optimization functions
@@ -151,7 +154,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         steps = steps - resume_step
     logging.info(
         f"Number of parameters: {sum(param.size for param in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array)))}"
-    )
+    ) 
     total_train_loss = 0
     total_steps = 0
     wandb.login(key=config.wandb_key)
@@ -241,17 +244,24 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     params_comb, __static = eqx.partition(model, eqx.is_array)
 
                     # pickled
-                    import pickle 
-                    check_folder_pickle = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
-                    os.makedirs(check_folder_pickle, exist_ok=True)
-                    with open(os.path.join(check_folder_pickle, f'params{step}.pkl'), 'wb') as f:
-                        pickle.dump(params_comb, f)
+                    # import pickle 
+                    # check_folder_pickle = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
+                    # os.makedirs(check_folder_pickle, exist_ok=True)
+                    # with open(os.path.join(check_folder_pickle, f'params{step}.pkl'), 'wb') as f:
+                    #     pickle.dump(params_comb, f)
                      
                     # serialized
+                    
                     check_folder_tree = f"{os.getcwd()}/{workdir}/{config.name}/tree_checkpoints"
                     os.makedirs(check_folder_tree, exist_ok=True)
 
-                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"params{step}.eqx"), params_comb)
+                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"latest_params.eqx"), params_comb)
+                    model_info = {
+                        "step": step,
+                    }
+                    
+                    with open(os.path.join(check_folder_tree, 'model_info.json'), 'w') as f:
+                        json.dump(model_info, f)
                     ###
 
 

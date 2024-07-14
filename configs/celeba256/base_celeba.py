@@ -8,6 +8,8 @@ def get_celeba_config(config):
     config.training.ot_cost_fn = "sqeuclidean"
     config.training.ot_geometry = "pointcloud"
     config.training.geometry_cost_matrix_kwargs = None
+
+
     
     # data
     config.data = data = ml_collections.ConfigDict()

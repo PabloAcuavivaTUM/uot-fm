@@ -53,7 +53,10 @@ def prepare_dataset(
     if not evaluation:
         dataset = dataset.shuffle(config.data.shuffle_buffer)
         dataset = dataset.repeat()
-    dataset = dataset.batch(config.training.batch_size, drop_remainder=not evaluation)
+        
+    # Notice the distinction between evaluation and not evaluation
+    batch_size = config.training.batch_size_matching if not evaluation else config.training.batch_size
+    dataset = dataset.batch(batch_size, drop_remainder=not evaluation)
     dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     dataset = tfds.as_numpy(dataset)
     dataset.length = data.data.shape[0]
@@ -617,7 +620,7 @@ def get_unbalanced_uniform_samplers(
 def get_generation_datasets(config: ConfigDict) -> GenerationSampler:
     """Get generation dataset and create sampler."""
     train_data = cifar10("train")
-    return GenerationSampler(jnp.array(train_data), config.training.batch_size)
+    return GenerationSampler(jnp.array(train_data), config.training.batch_size_matching)
 
 
 def cifar10(split: str) -> np.ndarray:

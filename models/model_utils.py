@@ -7,7 +7,7 @@ import jax.random as jr
 import ml_collections
 from diffusers import FlaxAutoencoderKL
 from transformers import AutoProcessor, FlaxCLIPModel
-
+import logging 
 
 from models.mlpmixer import Mixer2d
 from models.unified_unet import UNet
@@ -15,9 +15,16 @@ from models.unified_unet import UNet
 def get_model(
     config: ml_collections.ConfigDict, data_shape: List[int], model_key: jr.KeyArray
 ):
+    in_data_shape = data_shape
+    out_data_shape = data_shape
+    if config.training.is_genot and ('x0_plus_' in config.training.genot.noise):
+        in_data_shape = [2*data_shape[0]] + [dshape for dshape in data_shape[1:]]
+
     if config.model.type == "mlpmixer":
+        if in_data_shape != out_data_shape:
+            raise NotImplementedError(f"mlpmixer does not support different input and output data shapes. Input: {in_data_shape.shape}, output : {out_data_shape.shape}")
         return Mixer2d(
-            data_shape,
+            in_data_shape,
             patch_size=config.model.patch_size,
             hidden_size=config.model.hidden_size,
             mix_patch_size=config.model.mix_patch_size,
@@ -28,7 +35,8 @@ def get_model(
         )
     elif config.model.type == "unet":
         return UNet(
-            data_shape,
+            in_data_shape,
+            out_data_shape,
             is_biggan=config.model.biggan_sample,
             dim_mults=config.model.dim_mults,
             hidden_size=config.model.hidden_size,

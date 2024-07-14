@@ -50,6 +50,13 @@ class EasyDict(dict):
             new_dict[k] = v[key]
         return new_dict
     
+    def concatenate(self, other : 'EasyDict', axis : int =0) -> 'EasyDict':
+        new_dict = EasyDict()
+        for k, v in self.items():
+            new_dict[k] = jnp.concatenate((v, other[k]), axis=axis)
+        return new_dict
+
+    
     def to_jnp(self, enforce_type=None) -> 'EasyDict':
         if enforce_type is None:
             return EasyDict(**{k: jnp.array(v) for k,v in self.items()})

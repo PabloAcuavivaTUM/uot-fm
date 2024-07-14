@@ -11,6 +11,8 @@ def get_uotfm_config():
     # training
     config.training.method = "flow"
     config.training.matching_method = "ot"
+    config.training.batch_size_matching = 256
+    config.training.pointcloud_batch_size = None
     config.training.compare_on = "data"
     config.training.gamma = "constant"
     config.training.flow_sigma = 0.0

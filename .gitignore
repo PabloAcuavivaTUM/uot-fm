@@ -9,6 +9,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+# Classifier free
+classifier_free
+
 # C extensions
 *.so
 
