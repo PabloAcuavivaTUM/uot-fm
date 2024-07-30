@@ -242,6 +242,9 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     ###
                     # Add pickled & serialized copied of model weights
                     params_comb, __static = eqx.partition(model, eqx.is_array)
+                    inference_params_comb, __static = eqx.partition(inference_model, eqx.is_array)
+
+                    
 
                     # pickled
                     # import pickle 
@@ -256,6 +259,8 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     os.makedirs(check_folder_tree, exist_ok=True)
 
                     eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"latest_params.eqx"), params_comb)
+                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"latest_inference_params.eqx"), inference_params_comb)
+
                     model_info = {
                         "step": step,
                     }

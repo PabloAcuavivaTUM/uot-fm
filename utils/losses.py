@@ -26,38 +26,41 @@ from typing import Optional
 
 def get_correlated_multivariate_normal_fn(n, independent_terms, key):
     rn_positions = jr.choice(key=key, a=jnp.arange(independent_terms), shape=(n,))
-    def correlated_multivariate_normal(key : jr.KeyArray, shape : Tuple[int, ...]):
+    def correlated_multivariate_normal(key : jr.KeyArray, x0_data : jax.Array, shape : Tuple[int, ...]):
         rn = jr.normal(key=key, shape=(independent_terms,))
         return rn[rn_positions].reshape(shape)
     
     return jax.jit(correlated_multivariate_normal, static_argnums=(1,))
 
-def correlated_multivariate_normal_matrix_fn(key : jr.KeyArray, shape : Tuple[int, ...] , rank : int = 100):
+def correlated_multivariate_normal_matrix_fn(key : jr.KeyArray, 
+                                             x0_data : jax.Array, 
+                                             shape : Tuple[int, ...], 
+                                             rank : int = 100,
+                                             ):
     m = shape[0]*shape[1]*shape[2] 
     A = jax.random.uniform(key, shape=(m, rank))
     # cov = jnp.matmul(A, A.T) 
     # cov = cov.at[jnp.diag_indices(m)].set(1)
-    
+
     rn = jax.random.normal(key, shape=(rank,))
     
     return (A@rn).reshape(shape)
 
-
-src_noises = dict(gaussian=jr.normal,
-                  gaussian01=lambda key, shape: 0.1*jr.normal(shape=shape, key=key),
-                  gaussian05=lambda key, shape: 0.5*jr.normal(shape=shape, key=key),
-                  gaussian1p2=lambda key, shape: 1.2*jr.normal(shape=shape, key=key),
-                  gaussian1p5=lambda key, shape: 1.5*jr.normal(shape=shape, key=key),
-                  gaussian2=lambda key, shape: 2*jr.normal(shape=shape, key=key),
-                    chisquare=lambda key, shape: jr.chisquare(df=1, key=key, shape=shape) - 1,
-                    uniform=lambda key, shape: 2*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1,1] 
-                    uniform1p5=lambda key, shape: 3*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1.5,1.5]
-                    uniform2=lambda key, shape: 4*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2,2] 
-                    uniform2p5=lambda key, shape: 5*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2.5,2.5] 
-                    exponential=lambda key, shape: jr.exponential(key=key, shape=shape) - 1, 
-                    beta33=lambda key, shape: jr.beta(a=3,b=3, key=key, shape=shape) - 0.5, 
-                    beta55=lambda key, shape: jr.beta(a=5,b=5, key=key, shape=shape) - 0.5, 
-                    beta27=lambda key, shape: jr.beta(a=2,b=7, key=key, shape=shape)  - 2 / 7,
+src_noises = dict(gaussian=lambda key, x0_data, shape: jr.normal(shape=shape, key=key),
+                  gaussian01=lambda key, x0_data, shape: 0.1*jr.normal(shape=shape, key=key),
+                  gaussian05=lambda key, x0_data, shape: 0.5*jr.normal(shape=shape, key=key),
+                  gaussian1p2=lambda key, x0_data, shape: 1.2*jr.normal(shape=shape, key=key),
+                  gaussian1p5=lambda key, x0_data, shape: 1.5*jr.normal(shape=shape, key=key),
+                  gaussian2=lambda key, x0_data, shape: 2*jr.normal(shape=shape, key=key),
+                    chisquare=lambda key, x0_data, shape: jr.chisquare(df=1, key=key, shape=shape) - 1,
+                    uniform=lambda key, x0_data, shape: 2*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1,1] 
+                    uniform1p5=lambda key, x0_data, shape: 3*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-1.5,1.5]
+                    uniform2=lambda key, x0_data, shape: 4*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2,2] 
+                    uniform2p5=lambda key, x0_data, shape: 5*(jr.uniform(key=key, shape=shape) - 0.5),  # Center [-2.5,2.5] 
+                    exponential=lambda key, x0_data, shape: jr.exponential(key=key, shape=shape) - 1, 
+                    beta33=lambda key, x0_data, shape: jr.beta(a=3,b=3, key=key, shape=shape) - 0.5, 
+                    beta55=lambda key, x0_data, shape: jr.beta(a=5,b=5, key=key, shape=shape) - 0.5, 
+                    beta27=lambda key, x0_data, shape: jr.beta(a=2,b=7, key=key, shape=shape)  - 2 / 7,
      )
 
 
@@ -184,7 +187,7 @@ class FlowMatching:
                 self.x0_plus_noise = True
             else:
                 self.x0_plus_noise = False
-
+        
             if self.genot.noise in src_noises:
                 self.noise_genot = src_noises[self.genot.noise]
             elif self.genot.noise == 'low_rank_gaussian':
@@ -196,6 +199,9 @@ class FlowMatching:
                 self.noise_genot = partial(correlated_multivariate_normal_matrix_fn, 
                                        rank=self.genot.gaussian_independent_terms,
                                        ) 
+            elif self.genot.noise == 'x0_add_gaussian':
+                alpha = self.genot.x0_add_alpha
+                self.noise_genot = lambda key, x0_data, shape: alpha * x0_data + (1-alpha)*jr.normal(key=key, shape=shape)                
             else:
                 raise ValueError(f'Invalid genot noise {self.genot.noise} given.')
         else:
@@ -214,6 +220,15 @@ class FlowMatching:
             return self.sigma * jnp.sqrt(t * (1 - t))
         elif self.gamma == "constant":
             return self.sigma
+        # Added noise schedules
+        elif self.gamma == "linear_decay":
+            return self.sigma * (1 - t)
+        elif self.gamma == "exponential_decay":
+            return self.sigma * jnp.exp(-t)
+        elif self.gamma == "exponential5_decay":
+            return self.sigma * jnp.exp(-5*t)
+        elif self.gamma == "quadratic_decay":
+            return self.sigma * (1 - t**2)
         else:
             raise ValueError(f"Unknown noise schedule {self.gamma}")
 
@@ -236,13 +251,14 @@ class FlowMatching:
             
             if self.is_genot:
                 key, subkey = jr.split(key, 2)
-                src_data = self.noise_genot(subkey, shape=x1.data.shape)                
+                src_data = self.noise_genot(subkey, x0_data=x0.data, shape=x0.data.shape)                
                 # Generating back conditioning x0 (to push towards keeping features)
                 key, subkey = jr.split(key, 2)
                 tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
                                         lambda: x0.data, 
                                         lambda: x1.data,
                                         )
+                
             else:
                 src_data = x0.data
                 tgt_data = x1.data
@@ -261,6 +277,21 @@ class FlowMatching:
             # the self.is_genot is redundant, but we leave it for clarity
             if self.is_genot and self.x0_plus_noise:
                 x_t = jnp.concatenate((x_t, x0.data), axis=0)
+            
+            
+            if self.is_genot:
+                # Mask some of the conditions if we are training classifier free 
+                key, subkey = jr.split(key, 2)
+                classifier_free_mask = jr.uniform(key=subkey) < self.genot.classifier_free_p_uncond
+                
+                film_cond = jax.lax.cond(classifier_free_mask,  
+                                        lambda: jnp.zeros_like(film_cond), 
+                                        lambda: film_cond,
+                                        )
+                cross_attn_cond = jax.lax.cond(classifier_free_mask,  
+                                        lambda: jnp.zeros_like(cross_attn_cond), 
+                                        lambda: cross_attn_cond,
+                                        )
             
             pred = model(t, x_t, 
                          film_cond=film_cond, 
@@ -348,7 +379,7 @@ class FlowMatching:
                 dt0 = self.dt0
             
             if self.is_genot:
-                src_data = self.noise_genot(key, shape=x0.data.shape)
+                src_data = self.noise_genot(key, x0_data=x0.data, shape=x0.data.shape)
             else:
                 src_data = x0.data
 

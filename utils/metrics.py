@@ -123,8 +123,6 @@ class MetricComputer:
                 pad_size = 0
                 src_batch = EasyDict(data=jr.normal(sample_key, [self.batch_size, *self.input_shape]), label=None)
             
-            # src_batch = jax.device_put(src_batch, self.shard)
-            # src_batch = src_batch.device_put(self.shard)
             src_batch = jx_device_put(src_batch, self.shard)
 
             if inputs is None:

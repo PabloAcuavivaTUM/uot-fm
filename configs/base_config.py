@@ -27,6 +27,7 @@ def get_base_config():
     training.genot = genot = ml_collections.ConfigDict()
     genot.noise = 'gaussian'
     genot.x0_prob = 0.0
+    genot.classifier_free_p_uncond = 0.0
 
     config.eval = eval = ml_collections.ConfigDict()
     eval.compute_metrics = True
