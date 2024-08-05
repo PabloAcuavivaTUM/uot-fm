@@ -18,12 +18,13 @@ def get_config():
 
     alpha = 0.10
 
-    config.name = f"celeba256-male-genot-otclip-FiLM(All)-AddGaussian({alpha})-classifier-free"
+    x0_prob = 0.1
+    config.name = f"celeba256-male-genot-otclip-FiLM(All)-AddGaussian({alpha})-return{x0_prob}"
     config.wandb_group = "genot"
     config.training.is_genot = True
     config.training.genot.noise = "x0_add_gaussian"
     config.training.genot.x0_add_alpha = alpha
-    config.training.genot.x0_prob = 0.1
+    config.training.genot.x0_prob = x0_prob
 
     # config.model.cross_attn_resolutions = [i for i in range(512)]
     # config.model.cross_attn_dim = config.model.input_shape[0]

@@ -10,21 +10,17 @@ def get_config():
     config = get_celeba_config(config)
     config = get_male_config(config)
 
-    config.training.num_steps = 450_000
+    config.training.num_steps = 400_000
     
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
-
-    alpha = 0.10
-
-    x0_prob = 0.01
-    config.name = f"celeba256-male-genot-otclip-FiLM(All)-AddGaussian({alpha})-return{x0_prob}"
+    noise = "const_gaussian"
+    config.name = f"celeba256-male-genot-otclip-FiLM(All)-{noise}-back"
     config.wandb_group = "genot"
     config.training.is_genot = True
-    config.training.genot.noise = "x0_add_gaussian"
-    config.training.genot.x0_add_alpha = alpha
-    config.training.genot.x0_prob = x0_prob
+    config.training.genot.noise = noise
+    config.training.genot.x0_prob = 1.0
 
     # config.model.cross_attn_resolutions = [i for i in range(512)]
     # config.model.cross_attn_dim = config.model.input_shape[0]
@@ -40,7 +36,5 @@ def get_config():
 
     config.training.compare_on = "embedding"
     config.training.ot_cost_fn = "cosine"
-
-    
 
     return config
