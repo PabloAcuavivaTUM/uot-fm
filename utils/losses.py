@@ -46,6 +46,28 @@ def correlated_multivariate_normal_matrix_fn(key : jr.KeyArray,
     
     return (A@rn).reshape(shape)
 
+
+
+def _positional_encoding_2d(d_model, height, width):
+    pe = jnp.zeros((height, width, d_model))
+    
+    y = jnp.arange(height, dtype=jnp.float32)
+    x = jnp.arange(width, dtype=jnp.float32)
+    xx, yy = jnp.meshgrid(x, y)
+    xx = xx[:,:, None]  # Shape: (height, width, 1)
+    yy = yy[:,:, None]  # Shape: (height, width, 1)
+    
+    div_term = jnp.exp(jnp.arange(0, d_model, 2) * (-jnp.log(10000.0) / d_model))
+    div_term = div_term[None, None, :]  # Shape: (1, 1, d_model // 2)
+
+    ####
+    pe.at[:,:, 0::2].set((jnp.sin(xx* div_term)*jnp.sin(yy* div_term)))
+    pe.at[:,:, 1::2].set((jnp.cos(xx* div_term)*jnp.cos(yy* div_term)))
+        
+    return pe.transpose(2,0,1)
+
+
+
 src_noises = dict(gaussian=lambda key, x0_data, shape: jr.normal(shape=shape, key=key),
                   gaussian01=lambda key, x0_data, shape: 0.1*jr.normal(shape=shape, key=key),
                   gaussian05=lambda key, x0_data, shape: 0.5*jr.normal(shape=shape, key=key),
@@ -61,6 +83,9 @@ src_noises = dict(gaussian=lambda key, x0_data, shape: jr.normal(shape=shape, ke
                     beta33=lambda key, x0_data, shape: jr.beta(a=3,b=3, key=key, shape=shape) - 0.5, 
                     beta55=lambda key, x0_data, shape: jr.beta(a=5,b=5, key=key, shape=shape) - 0.5, 
                     beta27=lambda key, x0_data, shape: jr.beta(a=2,b=7, key=key, shape=shape)  - 2 / 7,
+                    const_zero=lambda key, x0_data, shape: jnp.zeros_like(x0_data),
+                    const_gaussian=lambda key, x0_data, shape: jr.normal(shape=shape, key=jr.PRNGKey(42)),
+                    const_encoding=lambda key, x0_data, shape: _positional_encoding_2d(*shape), # TODO - REVISE
      )
 
 
@@ -199,14 +224,14 @@ class FlowMatching:
                 self.noise_genot = partial(correlated_multivariate_normal_matrix_fn, 
                                        rank=self.genot.gaussian_independent_terms,
                                        ) 
-            elif self.genot.noise == 'x0_add_gaussian':
-                alpha = self.genot.x0_add_alpha
-                self.noise_genot = lambda key, x0_data, shape: alpha * x0_data + (1-alpha)*jr.normal(key=key, shape=shape)                
             else:
                 raise ValueError(f'Invalid genot noise {self.genot.noise} given.')
+            
+            self.x0_add_alpha = self.genot.get('x0_add_alpha', None)
         else:
             self.noise_genot = None
-            
+            self.x0_add_alpha = None 
+
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
         return x1 - x0
@@ -249,36 +274,11 @@ class FlowMatching:
             key: jr.KeyArray,
         ) -> jax.Array:
             
-            if self.is_genot:
-                key, subkey = jr.split(key, 2)
-                src_data = self.noise_genot(subkey, x0_data=x0.data, shape=x0.data.shape)                
-                # Generating back conditioning x0 (to push towards keeping features)
-                key, subkey = jr.split(key, 2)
-                tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
-                                        lambda: x0.data, 
-                                        lambda: x1.data,
-                                        )
-                
-            else:
-                src_data = x0.data
-                tgt_data = x1.data
-
-            noise_xt = jr.normal(key, x1.data.shape)
-            
-            u_t = self.compute_flow(tgt_data, src_data)
-            x_t = self.sample_xt(tgt_data, src_data, t, noise_xt)
-
             # TODO: If we change cross_attn_cond for something different than the VAE / Original image modify this
             film_cond = x0.get("embedding", None)
             cross_attn_cond=x0.data
             ###
 
-            # Notice this is only for is_genot but we need to do it later so that u_t & x_t are properly calculated
-            # the self.is_genot is redundant, but we leave it for clarity
-            if self.is_genot and self.x0_plus_noise:
-                x_t = jnp.concatenate((x_t, x0.data), axis=0)
-            
-            
             if self.is_genot:
                 # Mask some of the conditions if we are training classifier free 
                 key, subkey = jr.split(key, 2)
@@ -292,7 +292,40 @@ class FlowMatching:
                                         lambda: jnp.zeros_like(cross_attn_cond), 
                                         lambda: cross_attn_cond,
                                         )
+                
+                key, subkey = jr.split(key, 2)
+                src_data = self.noise_genot(subkey, x0_data=x0.data, shape=x0.data.shape)        
+                
+                if self.x0_add_alpha is not None: # Only apply x0_add_alpha to conditional model 
+                    alpha = self.x0_add_alpha 
+                    src_data = jax.lax.cond(classifier_free_mask,  
+                                        lambda: src_data, 
+                                        lambda: alpha*x0.data + (1-alpha)*src_data,
+                                        )
+                         
+       
+                # Generating back conditioning x0 (to push towards keeping features)
+                key, subkey = jr.split(key, 2)
+                tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
+                                        lambda: x0.data, 
+                                        lambda: x1.data,
+                                        )
+            else:
+                src_data = x0.data
+                tgt_data = x1.data
+
+            noise_xt = jr.normal(key, x1.data.shape)
             
+            u_t = self.compute_flow(tgt_data, src_data)
+            x_t = self.sample_xt(tgt_data, src_data, t, noise_xt)
+
+
+            # Notice this is only for is_genot but we need to do it later so that u_t & x_t are properly calculated
+            # the self.is_genot is redundant, but we leave it for clarity
+            if self.is_genot and self.x0_plus_noise:
+                x_t = jnp.concatenate((x_t, x0.data), axis=0)
+            
+                        
             pred = model(t, x_t, 
                          film_cond=film_cond, 
                          cross_attn_cond=cross_attn_cond, 
@@ -380,6 +413,9 @@ class FlowMatching:
             
             if self.is_genot:
                 src_data = self.noise_genot(key, x0_data=x0.data, shape=x0.data.shape)
+                if self.x0_add_alpha is not None:
+                    alpha = self.x0_add_alpha 
+                    src_data = alpha*x0.data + (1-alpha)*src_data
             else:
                 src_data = x0.data
 

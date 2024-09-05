@@ -16,17 +16,20 @@ def get_config():
     config.training.tau_b = 0.95
 
 
-    config.name = f"celeba256-male-genot-otclip-FiLM(All)-MLPFiLM"
+    alpha = 0.10
+
+    config.name = f"celeba256-male-genot-otclip-FiLM(All)-AddGaussian({alpha})-classifier-free-fixed"
     config.wandb_group = "genot"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
+    config.training.genot.x0_add_alpha = alpha
+    config.training.genot.classifier_free_p_uncond = 0.2
 
     # config.model.cross_attn_resolutions = [i for i in range(512)]
     # config.model.cross_attn_dim = config.model.input_shape[0]
 
     config.data.additional_embedding = "clip"
     config.model.film_cond_dim = 512
-    config.overfit_to_one_batch = True
     
     config.model.film_resolutions_down = [i for i in range(200)] # This could be 4, 8, 16, 32 
     config.model.film_resolutions_up = [i for i in range(200)]   # This could be 4, 8, 16, 32
@@ -36,5 +39,7 @@ def get_config():
 
     config.training.compare_on = "embedding"
     config.training.ot_cost_fn = "cosine"
+
+    
 
     return config

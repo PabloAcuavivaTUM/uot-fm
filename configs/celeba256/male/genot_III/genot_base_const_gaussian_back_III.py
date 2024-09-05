@@ -10,23 +10,31 @@ def get_config():
     config = get_celeba_config(config)
     config = get_male_config(config)
 
-    config.training.num_steps = 450_000
+    config.training.num_steps = 400_000
     
     config.training.tau_a = 0.95
     config.training.tau_b = 0.95
 
+    alpha = 0.10
+    
+    noise = "const_gaussian"
+    sigma = 0.25
+    gamma = "bridge"
+    config.training.flow_sigma = sigma
+    config.training.gamma = gamma 
 
-    config.name = f"celeba256-male-genot-otclip-FiLM(All)-MLPFiLM"
+    config.name = f"celeba256-male-genot-otclip-FiLM(All)-{noise}({alpha})-back({gamma},{sigma})"
     config.wandb_group = "genot"
     config.training.is_genot = True
-    config.training.genot.noise = "gaussian"
+    config.training.genot.noise = noise
+    config.training.genot.x0_add_alpha = alpha
+    config.training.genot.x0_prob = 1.0
 
     # config.model.cross_attn_resolutions = [i for i in range(512)]
     # config.model.cross_attn_dim = config.model.input_shape[0]
 
     config.data.additional_embedding = "clip"
     config.model.film_cond_dim = 512
-    config.overfit_to_one_batch = True
     
     config.model.film_resolutions_down = [i for i in range(200)] # This could be 4, 8, 16, 32 
     config.model.film_resolutions_up = [i for i in range(200)]   # This could be 4, 8, 16, 32
