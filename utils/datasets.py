@@ -1,8 +1,8 @@
 import csv
+import glob
 import logging
 import os
-import glob 
-from typing import Callable, List, Dict, Optional, Tuple, Union 
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 import jax
@@ -13,15 +13,16 @@ import tensorflow_datasets as tfds
 from ml_collections import ConfigDict
 from tqdm import tqdm
 
-from utils import GenerationSampler
-from .miscellaneous import EasyDict
 from models import get_clip_fns
+from utils import GenerationSampler
 
+from .miscellaneous import EasyDict
 
-# TODO: Once verified the code is properly working, change "map_forward" so that is works for all datasets in translation, simply switch  
-#  the source and the target dataset after getting the data if need be and remove all references thereafter 
-# TODO: Overfit to one batch can be mostly substituted in many places for nsamples (Leave it as it changes some preprocessing, but the function 
+# TODO: Once verified the code is properly working, change "map_forward" so that is works for all datasets in translation, simply switch
+#  the source and the target dataset after getting the data if need be and remove all references thereafter
+# TODO: Overfit to one batch can be mostly substituted in many places for nsamples (Leave it as it changes some preprocessing, but the function
 # which gets the data does not need it).
+
 
 def get_translation_datasets(
     config: ConfigDict,
@@ -53,9 +54,13 @@ def prepare_dataset(
     if not evaluation:
         dataset = dataset.shuffle(config.data.shuffle_buffer)
         dataset = dataset.repeat()
-        
+
     # Notice the distinction between evaluation and not evaluation
-    batch_size = config.training.batch_size_matching if not evaluation else config.training.batch_size
+    batch_size = (
+        config.training.batch_size_matching
+        if not evaluation
+        else config.training.batch_size
+    )
     dataset = dataset.batch(batch_size, drop_remainder=not evaluation)
     dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     dataset = tfds.as_numpy(dataset)
@@ -82,14 +87,16 @@ def get_preprocess_fn(config, evaluation: bool = False, precomputing: bool = Fal
         elif config.task == "generation":
             x = tf.image.random_flip_left_right(x)
             x = tf.transpose(x, perm=[2, 0, 1])
-        
+
         return x
-    
+
     if not precomputing:
         if config.model.use_vae:
             process_ds = lambda x: tf.cast(x, tf.float32)
-        return lambda easydict: EasyDict(data=process_ds(easydict.pop('data')), **easydict)
-    
+        return lambda easydict: EasyDict(
+            data=process_ds(easydict.pop("data")), **easydict
+        )
+
     return process_ds
 
 
@@ -106,14 +113,12 @@ def get_data(
     vae_encode_fn: Optional[Callable] = None,
 ) -> List[Union[np.ndarray, Dict[str, np.ndarray]]]:
     """Load source and target, train and evaluation data."""
-    
+
     if vae_encode_fn is not None:
-            preprocess_fn = get_preprocess_fn(
-                config, evaluation=True, precomputing=True
-            )
+        preprocess_fn = get_preprocess_fn(config, evaluation=True, precomputing=True)
     else:
         preprocess_fn = None
-    
+
     if config.data.target == "emnist":
         train_source, train_target = emnist("train")
         eval_source, eval_target = emnist("test")
@@ -150,9 +155,9 @@ def get_data(
             shard=shard,
             vae_encode_fn=vae_encode_fn,
             preprocess_fn=preprocess_fn,
-            additional_embedding=config.data.additional_embedding
+            additional_embedding=config.data.additional_embedding,
         )
-        
+
         eval_source, eval_target = horse2zebra(
             split="test",
             batch_size=config.training.batch_size,
@@ -160,7 +165,7 @@ def get_data(
             shard=shard,
             vae_encode_fn=vae_encode_fn,
             preprocess_fn=preprocess_fn,
-            additional_embedding=config.data.additional_embedding
+            additional_embedding=config.data.additional_embedding,
         )
     elif config.data.target == "gaussian":
         # TODO: Not checked if it works
@@ -172,7 +177,6 @@ def get_data(
             input_dim=config.input_dim,
             num_samples=config.eval.eval_samples,
         )
-        
 
     elif config.data.target == "celeba_fake":
         # Fake datata with same dimensions as celeba256 encoded for quick pipeline prototyping
@@ -199,18 +203,18 @@ def get_data(
     elif config.data.source == "celeba_attribute":
         pass
     elif config.data.source == "horse2zebra":
-        pass 
+        pass
     elif config.data.source == "emnist":
         pass
     elif config.data.source == "celeba_fake":
-        pass 
+        pass
     else:
         raise ValueError(f"Unknown source dataset {config.data.source}")
 
     if config.overfit_to_one_batch:
-        train_source = train_source.slice(slice(0, config.training.batch_size))        
+        train_source = train_source.slice(slice(0, config.training.batch_size))
         train_target = train_target.slice(slice(0, config.training.batch_size))
-        eval_source = train_source.slice(slice(0, config.training.batch_size))        
+        eval_source = train_source.slice(slice(0, config.training.batch_size))
         eval_target = train_target.slice(slice(0, config.training.batch_size))
 
     return (
@@ -251,8 +255,8 @@ def emnist(split: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
     source = EasyDict(data=source_data, label=one_hot_src_labels)
     target = EasyDict(data=target_data, label=one_hot_tgt_labels)
-    
-    return source, target 
+
+    return source, target
 
 
 def celeba_fake(
@@ -261,7 +265,7 @@ def celeba_fake(
     map_forward: bool,
     batch_size: int,
     subset_attribute_id: Optional[int] = None,
-    additional_embedding : Optional[str] = None, 
+    additional_embedding: Optional[str] = None,
 ):
     data_dir = "./data/celeba"
     with open(f"{data_dir}/list_attr_celeba.txt") as csv_file:
@@ -306,19 +310,18 @@ def celeba_fake(
         [label for label, indice in zip(label_int, target_indices) if indice]
     )
 
-    N = min(512*16, source_labels.shape[0], target_labels.shape[0])
+    N = min(512 * 16, source_labels.shape[0], target_labels.shape[0])
     target_data = jnp.abs(np.random.rand(N, 4, 32, 32))
     source_data = jnp.abs(np.random.rand(N, 4, 32, 32))
-    
+
     source = EasyDict(data=source_data, label=source_labels[:N])
     target = EasyDict(data=target_data, label=target_labels[:N])
 
-    if additional_embedding: 
+    if additional_embedding:
         source["embedding"] = jnp.abs(np.random.rand(N, 512))
         target["embedding"] = jnp.abs(np.random.rand(N, 512))
 
-
-    return source, target 
+    return source, target
 
 
 def celeba_attribute(
@@ -331,9 +334,9 @@ def celeba_attribute(
     vae_encode_fn: Optional[Callable] = None,
     preprocess_fn: Optional[Callable] = None,
     subset_attribute_id: Optional[int] = None,
-    additional_embedding : Optional[str] = None, 
+    additional_embedding: Optional[str] = None,
     nsamples: Optional[int] = None,
-) -> Tuple[dict[str,np.ndarray], dict[str,np.ndarray], np.ndarray, np.ndarray]:
+) -> Tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray, np.ndarray]:
     """
     Load celeba attribute data.
 
@@ -410,7 +413,7 @@ def celeba_attribute(
     logging.info("Loading source and target data.")
     source_data = []
     target_data = []
-    
+
     # Load source data
     for fname in tqdm(source_filenames):
         image = cv2.imread(f"{data_dir}/img_align_celeba/{fname}")
@@ -419,8 +422,8 @@ def celeba_attribute(
         source_data.append(image)
         if overfit_to_one_batch and len(source_data) == batch_size:
             break
-    
-    # Load target data 
+
+    # Load target data
     for fname in tqdm(target_filenames):
         image = cv2.imread(f"{data_dir}/img_align_celeba/{fname}")
         # cv2 reads images in BGR format, so we need to reverse the channel
@@ -429,18 +432,25 @@ def celeba_attribute(
         if overfit_to_one_batch and len(target_data) == batch_size:
             break
 
-    
-    if additional_embedding: 
-        source_embedding = compute_embedding(source_data, embedding=additional_embedding)
-        target_embedding = compute_embedding(target_data, embedding=additional_embedding)
+    if additional_embedding:
+        source_embedding = compute_embedding(
+            source_data, embedding=additional_embedding
+        )
+        target_embedding = compute_embedding(
+            target_data, embedding=additional_embedding
+        )
 
     if vae_encode_fn is not None:
         logging.info("Preprocessing for VAE embedding.")
         source_data = [preprocess_fn(image).numpy() for image in source_data]
         target_data = [preprocess_fn(image).numpy() for image in target_data]
         logging.info("Precomputing VAE embedding.")
-        source_data = compute_vae_encoding(source_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard)
-        target_data = compute_vae_encoding(target_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard)
+        source_data = compute_vae_encoding(
+            source_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard
+        )
+        target_data = compute_vae_encoding(
+            target_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard
+        )
     else:
         source_data = np.array(source_data)
         target_data = np.array(target_data)
@@ -448,7 +458,7 @@ def celeba_attribute(
     source = EasyDict(data=source_data, label=source_labels)
     target = EasyDict(data=target_data, label=target_labels)
 
-    if additional_embedding: 
+    if additional_embedding:
         source["embedding"] = source_embedding
         target["embedding"] = target_embedding
 
@@ -463,9 +473,9 @@ def horse2zebra(
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
     preprocess_fn: Optional[Callable] = None,
-    additional_embedding : Optional[str] = None, 
+    additional_embedding: Optional[str] = None,
     nsamples: Optional[int] = None,
-) -> Tuple[dict[str,np.ndarray], dict[str,np.ndarray], np.ndarray, np.ndarray]:
+) -> Tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray, np.ndarray]:
     """
     Load horse2zebra data.
 
@@ -479,21 +489,20 @@ def horse2zebra(
         subset_attribute_id: Subset attribute id to split on (0-39)
         nsamples: Indicates the number of samples to load. Default None, load all.
     """
-    
+
     data_dir = "./data/horse2zebra"
     if split == "train":
-        source_filenames = glob.glob(os.path.join(data_dir, 'trainA', '*'))
-        target_filenames = glob.glob(os.path.join(data_dir, 'trainB', '*'))
+        source_filenames = glob.glob(os.path.join(data_dir, "trainA", "*"))
+        target_filenames = glob.glob(os.path.join(data_dir, "trainB", "*"))
     elif split == "test":
-        source_filenames = glob.glob(os.path.join(data_dir, 'testA', '*'))
-        target_filenames = glob.glob(os.path.join(data_dir, 'testB', '*'))
+        source_filenames = glob.glob(os.path.join(data_dir, "testA", "*"))
+        target_filenames = glob.glob(os.path.join(data_dir, "testB", "*"))
     elif split == "full":
-        source_filenames = glob.glob(os.path.join(data_dir, 'trainA', '*'))
-        target_filenames = glob.glob(os.path.join(data_dir, 'trainB', '*'))
+        source_filenames = glob.glob(os.path.join(data_dir, "trainA", "*"))
+        target_filenames = glob.glob(os.path.join(data_dir, "trainB", "*"))
 
-        source_filenames += glob.glob(os.path.join(data_dir, 'testA', '*'))
-        target_filenames += glob.glob(os.path.join(data_dir, 'testB', '*'))
-    
+        source_filenames += glob.glob(os.path.join(data_dir, "testA", "*"))
+        target_filenames += glob.glob(os.path.join(data_dir, "testB", "*"))
 
     if nsamples is not None:
         source_filenames = source_filenames[:nsamples]
@@ -502,7 +511,7 @@ def horse2zebra(
     logging.info("Loading source and target data.")
     source_data = []
     target_data = []
-    
+
     # Load source data
     for fname in tqdm(source_filenames):
         image = cv2.imread(fname)
@@ -511,8 +520,8 @@ def horse2zebra(
         source_data.append(image)
         if overfit_to_one_batch and len(source_data) == batch_size:
             break
-    
-    # Load target data 
+
+    # Load target data
     for fname in tqdm(target_filenames):
         image = cv2.imread(fname)
         # cv2 reads images in BGR format, so we need to reverse the channel
@@ -521,21 +530,32 @@ def horse2zebra(
         if overfit_to_one_batch and len(target_data) == batch_size:
             break
 
-    
-    if additional_embedding: 
-        source_embedding = compute_embedding(source_data, embedding=additional_embedding)
-        target_embedding = compute_embedding(target_data, embedding=additional_embedding)
+    if additional_embedding:
+        source_embedding = compute_embedding(
+            source_data, embedding=additional_embedding
+        )
+        target_embedding = compute_embedding(
+            target_data, embedding=additional_embedding
+        )
 
     if vae_encode_fn is not None:
         logging.info("Preprocessing for VAE embedding.")
         source_data = [preprocess_fn(image).numpy() for image in source_data]
         target_data = [preprocess_fn(image).numpy() for image in target_data]
         logging.info("Precomputing VAE embedding.")
-        source_data_vae = compute_vae_encoding(source_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard)
-        target_data_vae = compute_vae_encoding(target_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard)
+        source_data_vae = compute_vae_encoding(
+            source_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard
+        )
+        target_data_vae = compute_vae_encoding(
+            target_data, vae_encode_fn=vae_encode_fn, batch_size=batch_size, shard=shard
+        )
 
-        source = EasyDict(data=source_data_vae)#, original_data=np.array(source_data))
-        target = EasyDict(data=target_data_vae)#, original_data=np.array(target_data))
+        source = EasyDict(
+            data=source_data_vae
+        )  # , original_data=np.array(source_data))
+        target = EasyDict(
+            data=target_data_vae
+        )  # , original_data=np.array(target_data))
 
     else:
         source_data = np.array(source_data)
@@ -544,19 +564,20 @@ def horse2zebra(
         source = EasyDict(data=source_data)
         target = EasyDict(data=target_data)
 
-    if additional_embedding: 
+    if additional_embedding:
         source["embedding"] = source_embedding
         target["embedding"] = target_embedding
 
     return source, target
 
 
-def compute_vae_encoding(data : list[np.ndarray],
-                         vae_encode_fn : Callable,         
-                         batch_size: int,
-                         shard: Optional[jax.sharding.Sharding] = None,
-                         ) -> Tuple[np.ndarray, np.ndarray]:
-    
+def compute_vae_encoding(
+    data: list[np.ndarray],
+    vae_encode_fn: Callable,
+    batch_size: int,
+    shard: Optional[jax.sharding.Sharding] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+
     batch_size = batch_size // 2
     vae_data = []
     # compute vae embedding batch-wise
@@ -575,14 +596,13 @@ def compute_vae_encoding(data : list[np.ndarray],
     return np.concatenate(vae_data)
 
 
-def compute_embedding(data : list[np.ndarray],
-                         embedding : str):
+def compute_embedding(data: list[np.ndarray], embedding: str):
     if embedding == "clip":
         encode_img_fn, encode_text_fn = get_clip_fns()
         embedded_data = encode_img_fn(data)
     else:
-        raise ValueError(f'embedding {embedding} is not valid.')
-    return embedded_data 
+        raise ValueError(f"embedding {embedding} is not valid.")
+    return embedded_data
 
 
 def get_unbalanced_uniform_samplers(
@@ -612,7 +632,7 @@ def get_unbalanced_uniform_samplers(
     source = EasyDict(data=source_data)
     target = EasyDict(data=target_data)
 
-    return source, target 
+    return source, target
 
 
 # ------------------
