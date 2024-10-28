@@ -1,8 +1,9 @@
+import functools as ft
+import logging
+import warnings
 from typing import Callable, Optional
 
-import functools as ft
 import einops
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,11 +13,11 @@ import numpy as np
 import scipy
 import tensorflow as tf
 from tqdm import tqdm
-import warnings
-import logging 
 
 from models import inception
-from .miscellaneous import EasyDict, jx_device_put, generate_wb_image
+
+from .miscellaneous import EasyDict, generate_wb_image, jx_device_put
+
 
 class MetricComputer:
     """
@@ -31,7 +32,7 @@ class MetricComputer:
         sample_fn: Callable,
         vae_decode_fn: Optional[Callable] = None,
         vae_encode_fn: Optional[Callable] = None,
-        is_genot : bool = False
+        is_genot: bool = False,
     ):
         # load pretrained inceptionv3 model
         rng = jax.random.PRNGKey(0)
@@ -44,11 +45,11 @@ class MetricComputer:
         if self.task == "translation":
             self.num_eval_samples = eval_ds.length
         else:
-            self.num_eval_samples = config.eval.eval_samples 
+            self.num_eval_samples = config.eval.eval_samples
         self.batch_size = config.training.batch_size
         self.return_samples = config.eval.save_samples
         if self.return_samples:
-            self.num_save_samples = config.eval.num_save_samples 
+            self.num_save_samples = config.eval.num_save_samples
         self.dataset = eval_ds
         self.repeat = 3 if config.data.shape[0] == 1 else 1
         self.input_shape = config.model.input_shape
@@ -78,12 +79,14 @@ class MetricComputer:
                 self.eval_labels = jnp.array(config.data.eval_labels)
                 self.mus_real, self.sigmas_real = [], []
                 for label in self.eval_labels:
-                    precomputed_stats = np.load(f"./assets/stats/{stats_file_name}_{label}.npz")
+                    precomputed_stats = np.load(
+                        f"./assets/stats/{stats_file_name}_{label}.npz"
+                    )
                     self.mus_real.append(precomputed_stats["mu"])
                     self.sigmas_real.append(precomputed_stats["sigma"])
 
         self.is_genot = is_genot
-        
+
     def compute_metrics(self, model: eqx.Module, key: jr.KeyArray):
         """
         Compute metrics for evaluation.
@@ -117,41 +120,62 @@ class MetricComputer:
                 pad_size = self.batch_size - src_batch.data.shape[0]
                 if pad_size > 0:
                     # TODO (IF using labels for something in the model): Here probably need to pad the whole thing. Also labels/embeddings...
-                    src_batch['data'] = jnp.pad(src_batch.data, ((0, pad_size), (0, 0), (0, 0), (0, 0)))
+                    src_batch["data"] = jnp.pad(
+                        src_batch.data, ((0, pad_size), (0, 0), (0, 0), (0, 0))
+                    )
             else:
                 sample_key, key = jr.split(key, 2)
                 pad_size = 0
-                src_batch = EasyDict(data=jr.normal(sample_key, [self.batch_size, *self.input_shape]), label=None)
-            
+                src_batch = EasyDict(
+                    data=jr.normal(sample_key, [self.batch_size, *self.input_shape]),
+                    label=None,
+                )
+
             src_batch = jx_device_put(src_batch, self.shard)
 
             if inputs is None:
-                if self.use_vae:                                        
+                if self.use_vae:
                     inputs = self.vae_decode_fn(src_batch.data) * 0.5 + 0.5
                 else:
                     inputs = src_batch.data * 0.5 + 0.5
             elif inputs.shape[0] < 2400:
                 if self.use_vae:
                     inputs = jnp.concatenate(
-                        [inputs, self.vae_decode_fn(src_batch.data)[: int(2400 - inputs.shape[0])] * 0.5 + 0.5]
+                        [
+                            inputs,
+                            self.vae_decode_fn(src_batch.data)[
+                                : int(2400 - inputs.shape[0])
+                            ]
+                            * 0.5
+                            + 0.5,
+                        ]
                     )
                 else:
-                    inputs = jnp.concatenate([inputs, src_batch.data[: int(2400 - inputs.shape[0])] * 0.5 + 0.5])
-            
+                    inputs = jnp.concatenate(
+                        [
+                            inputs,
+                            src_batch.data[: int(2400 - inputs.shape[0])] * 0.5 + 0.5,
+                        ]
+                    )
+
             # sample from model
             if self.is_genot:
                 batch_size = src_batch.data.shape[0]
                 ode_key = jr.split(key, batch_size)
             else:
                 ode_key = None
-            
+
             sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch, ode_key)
-            
+
             nfes.append(nfe)
             if self.enable_path_lengths:
                 # compute euclidean distance between samples and inputs
                 if pad_size > 0:
-                    path_lengths.append(self.rmse_fn(src_batch.data[:-pad_size], sample_batch[:-pad_size]))
+                    path_lengths.append(
+                        self.rmse_fn(
+                            src_batch.data[:-pad_size], sample_batch[:-pad_size]
+                        )
+                    )
                 else:
                     path_lengths.append(self.rmse_fn(src_batch.data, sample_batch))
             if self.use_vae:
@@ -161,14 +185,18 @@ class MetricComputer:
             if self.enable_fid:
                 inception_act = self.compute_inception_acts(sample_batch)
                 inception_acts.append(inception_act)
-            if pad_size > 0: # TODO: What is the function of padding src_batc['data']? It doesn't seem to be used 
-                src_batch['data'] = src_batch.data[:-pad_size]
+            if (
+                pad_size > 0
+            ):  # TODO: What is the function of padding src_batc['data']? It doesn't seem to be used
+                src_batch["data"] = src_batch.data[:-pad_size]
                 sample_batch = sample_batch[:-pad_size]
             # safe samples and compute inception activation
             if samples is None:
                 samples = sample_batch * 0.5 + 0.5
             elif samples.shape[0] < 2400:
-                samples = jnp.concatenate([samples, sample_batch[: int(2400 - samples.shape[0])] * 0.5 + 0.5])
+                samples = jnp.concatenate(
+                    [samples, sample_batch[: int(2400 - samples.shape[0])] * 0.5 + 0.5]
+                )
             if self.eval_labelwise:
                 for idx, label in enumerate(self.eval_labels):
                     if label == 201:
@@ -176,14 +204,13 @@ class MetricComputer:
                     else:
                         labels_indices[idx].append((src_batch.label[:, label] == 1.0))
 
-        
         eval_dict["nfe"] = jnp.mean(jnp.hstack(nfes))
         if self.enable_mse:
             eval_dict["mse"] = jnp.mean(jnp.hstack(mses))
         if self.enable_path_lengths:
             eval_dict["path_lengths"] = jnp.mean(jnp.hstack(path_lengths)) * 127.5
             eval_dict["path_lengths_std"] = jnp.std(jnp.hstack(path_lengths)) * 127.5
-        
+
         # compute fid
         if self.enable_fid:
             inception_acts = jnp.concatenate(inception_acts, axis=0)
@@ -191,15 +218,21 @@ class MetricComputer:
                 inception_acts = inception_acts[:-pad_size]
             mu = jnp.mean(inception_acts, axis=0)
             sigma = jnp.cov(inception_acts, rowvar=False)
-            eval_dict["fid"] = self.compute_fid(self.mu_real, self.sigma_real, mu, sigma)
+            eval_dict["fid"] = self.compute_fid(
+                self.mu_real, self.sigma_real, mu, sigma
+            )
         if self.return_samples:
             # save image grid loggable to wandb
             if self.task == "generation":
-                wb_image = generate_wb_image(samples=samples, num_samples=self.num_save_samples) 
+                wb_image = generate_wb_image(
+                    samples=samples, num_samples=self.num_save_samples
+                )
             else:
-                wb_image = generate_wb_image(samples=samples, inputs=inputs, num_samples=self.num_save_samples)
+                wb_image = generate_wb_image(
+                    samples=samples, inputs=inputs, num_samples=self.num_save_samples
+                )
             eval_dict["samples"] = wb_image
-        
+
         if self.eval_labelwise:
             # compute fid labelwise
             fid_scores = []
@@ -209,17 +242,24 @@ class MetricComputer:
                     inception_act_label = inception_acts[label_indices]
                     mu = jnp.mean(inception_act_label, axis=0)
                     sigma = jnp.cov(inception_act_label, rowvar=False)
-                    fid_score = self.compute_fid(self.mus_real[idx], self.sigmas_real[idx], mu, sigma)
+                    fid_score = self.compute_fid(
+                        self.mus_real[idx], self.sigmas_real[idx], mu, sigma
+                    )
                     eval_dict[f"fid_{label}"] = fid_score
                     fid_scores.append(fid_score)
-                if self.return_samples: # ! Notice here we always assume we are in the translation setting for now 
-                    plot_indices = label_indices[:2400] # ? Is 2400 just hardcoded for any reason or just to get enough images?
-                    wb_image = generate_wb_image(samples=samples[plot_indices], 
-                                                inputs=inputs[plot_indices], 
-                                                num_samples=self.num_save_samples,
-                                                      )
+                if (
+                    self.return_samples
+                ):  # ! Notice here we always assume we are in the translation setting for now
+                    plot_indices = label_indices[
+                        :2400
+                    ]  # ? Is 2400 just hardcoded for any reason or just to get enough images?
+                    wb_image = generate_wb_image(
+                        samples=samples[plot_indices],
+                        inputs=inputs[plot_indices],
+                        num_samples=self.num_save_samples,
+                    )
                     eval_dict[f"samples_{label}"] = wb_image
-            
+
             eval_dict["fid_average"] = jnp.mean(jnp.hstack(fid_scores))
         return eval_dict
 
@@ -227,19 +267,27 @@ class MetricComputer:
         """
         Compute inception activations for a batch of images.
         """
-        inception_input = einops.repeat(image_batch, "b c h w -> b h w (c repeat)", repeat=self.repeat)
+        inception_input = einops.repeat(
+            image_batch, "b c h w -> b h w (c repeat)", repeat=self.repeat
+        )
         inception_input = jax.image.resize(
             inception_input,
             shape=[image_batch.shape[0], 299, 299, 3],
             method="bilinear",
             antialias=True,
         )
-        inception_output = self.apply_fn(self.params, jax.lax.stop_gradient(inception_input))
+        inception_output = self.apply_fn(
+            self.params, jax.lax.stop_gradient(inception_input)
+        )
         return inception_output.squeeze(axis=1).squeeze(axis=1)
 
     @staticmethod
     def compute_fid(
-        mu_real: np.ndarray, sigma_real: np.ndarray, mu_gen: np.ndarray, sigma_gen: np.ndarray, eps: float = 1e-6
+        mu_real: np.ndarray,
+        sigma_real: np.ndarray,
+        mu_gen: np.ndarray,
+        sigma_gen: np.ndarray,
+        eps: float = 1e-6,
     ) -> np.ndarray:
         """
         Compute Frechet Inception Distance (FID) between two distributions.
@@ -250,14 +298,23 @@ class MetricComputer:
         sigma_gen = np.atleast_1d(sigma_gen)
         sigma_real = np.atleast_1d(sigma_real)
 
-        assert mu_gen.shape == mu_real.shape, f"Shapes {mu_gen.shape} != {mu_real.shape}"
-        assert sigma_gen.shape == sigma_real.shape, f"Shapes {sigma_gen.shape} != {sigma_real.shape}"
+        assert (
+            mu_gen.shape == mu_real.shape
+        ), f"Shapes {mu_gen.shape} != {mu_real.shape}"
+        assert (
+            sigma_gen.shape == sigma_real.shape
+        ), f"Shapes {sigma_gen.shape} != {sigma_real.shape}"
 
         diff = mu_real - mu_gen
         covmean, _ = scipy.linalg.sqrtm(sigma_real.dot(sigma_gen), disp=False)
 
         if not np.isfinite(covmean).all():
-            warnings.warn((f"fid calculation produces singular product; " "adding {eps} to diagonal of cov estimates"))
+            warnings.warn(
+                (
+                    f"fid calculation produces singular product; "
+                    "adding {eps} to diagonal of cov estimates"
+                )
+            )
             offset = np.eye(sigma_real.shape[0]) * eps
             covmean = scipy.linalg.sqrtm((sigma_real + offset).dot(sigma_gen + offset))
 
@@ -269,4 +326,6 @@ class MetricComputer:
             covmean = covmean.real
 
         tr_covmean = np.trace(covmean)
-        return diff.dot(diff) + np.trace(sigma_real) + np.trace(sigma_gen) - 2 * tr_covmean
+        return (
+            diff.dot(diff) + np.trace(sigma_real) + np.trace(sigma_gen) - 2 * tr_covmean
+        )
