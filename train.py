@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import json 
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 
@@ -10,7 +10,6 @@ import jax.experimental.mesh_utils as mesh_utils
 import jax.numpy as jnp
 import jax.random as jr
 import jax.sharding as sharding
-import jax.experimental.mesh_utils as mesh_utils
 import ml_collections
 import numpy as np
 import optax
@@ -21,14 +20,14 @@ from tqdm import tqdm
 from models import get_model, get_vae_fns
 from utils import (
     BatchResampler,
+    EasyDict,
     MetricComputer,
+    generate_wb_image,
     get_generation_datasets,
     get_loss_builder,
     get_optimizer,
     get_translation_datasets,
-    EasyDict, 
-    jx_device_put, 
-    generate_wb_image,
+    jx_device_put,
 )
 
 
@@ -41,7 +40,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     model_key, train_key, eval_key = jr.split(key, 3)
     # set up sharding
     num_devices = len(jax.devices())
-    devices = mesh_utils.create_device_mesh((num_devices, 1,1,1)) 
+    devices = mesh_utils.create_device_mesh((num_devices, 1, 1, 1))
     shard = sharding.PositionalSharding(devices)
     # get data
     batch_size = config.training.batch_size
@@ -50,11 +49,11 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         # load vae and jitted encode/decode functions
         vae_encode_fn, vae_decode_fn = get_vae_fns(shard)
     else:
-        vae_encode_fn, vae_decode_fn = None, None 
+        vae_encode_fn, vae_decode_fn = None, None
 
     if config.task == "translation":
-        train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds = get_translation_datasets(
-            config, shard, vae_encode_fn
+        train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds, auxiliary_data_prep = (
+            get_translation_datasets(config, shard, vae_encode_fn)
         )
         train_src_loader, train_tgt_loader = iter(train_src_ds), iter(train_tgt_ds)
         logging.info(f"num_train_src: {train_src_ds.length}")
@@ -68,13 +67,13 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     if config.training.matching:
         batch_resampler = BatchResampler(
             batch_size=batch_size,
-            batch_size_matching=config.training.batch_size_matching, 
+            batch_size_matching=config.training.batch_size_matching,
             tau_a=config.training.tau_a,
             tau_b=config.training.tau_b,
             epsilon=config.training.epsilon,
             cost_fn=config.training.ot_cost_fn,
-            geometry=config.training.ot_geometry, 
-            geometry_cost_matrix_kwargs=config.training.geometry_cost_matrix_kwargs, 
+            geometry=config.training.ot_geometry,
+            geometry_cost_matrix_kwargs=config.training.geometry_cost_matrix_kwargs,
             matching_method=config.training.matching_method,
             compare_on=config.training.compare_on,
             pointcloud_batch_size=config.training.pointcloud_batch_size,
@@ -87,7 +86,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
     opt = get_optimizer(config)
     opt_state = opt.init(eqx.filter(model, eqx.is_array))
     train_step_fn = loss_builder.get_train_step_fn(loss_fn, opt.update)
-    
+
     if config.optim.ema_decay > 0.0:
         assert config.optim.ema_decay < 1.0
         opt_ema = optax.ema(config.optim.ema_decay, debias=False)
@@ -99,6 +98,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                 eqx.filter(curr_model, eqx.is_array), curr_ema_state
             )
             return ema_state
+
     else:
         ema_state = None
 
@@ -111,7 +111,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             sample_fn=sample_fn,
             vae_encode_fn=vae_encode_fn,
             vae_decode_fn=vae_decode_fn,
-            is_genot=config.training.is_genot
+            is_genot=config.training.is_genot,
         )
         if config.training.save_checkpoints:
             # create checkpoint manager
@@ -154,7 +154,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         steps = steps - resume_step
     logging.info(
         f"Number of parameters: {sum(param.size for param in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array)))}"
-    ) 
+    )
     total_train_loss = 0
     total_steps = 0
     wandb.login(key=config.wandb_key)
@@ -166,8 +166,8 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         config=config,
     )
     # Manual eval freq points
-    eval_freq_points = config.training.get('eval_freq_points', [])
-    
+    eval_freq_points = config.training.get("eval_freq_points", [])
+
     for step in tqdm(range(steps), total=steps):
         train_key, resample_key = jr.split(train_key, 2)
         if config.task == "translation":
@@ -177,7 +177,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             src_batch, tgt_batch = train_loader(sample_key)
         src_batch, tgt_batch = src_batch.to_jnp(), tgt_batch.to_jnp()
         if config.training.matching:
-            # resample batches            
+            # resample batches
             src_batch, tgt_batch = batch_resampler(resample_key, src_batch, tgt_batch)
 
         # src_batch = src_batch.device_put(shard)
@@ -204,7 +204,11 @@ def train(config: ml_collections.ConfigDict, workdir: str):
             total_train_loss = 0
             total_steps = 0
 
-        if ((step % config.training.eval_freq) == 0 and step != 0) or (step == steps - 1) or (step in eval_freq_points):
+        if (
+            ((step % config.training.eval_freq) == 0 and step != 0)
+            or (step == steps - 1)
+            or (step in eval_freq_points)
+        ):
             if config.eval.compute_metrics:
                 logging.info(f"Step {step}, Computing metrics...")
                 if config.optim.ema_decay < 1.0:
@@ -224,12 +228,15 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                 else:
                     tgt_batch_data = tgt_batch.data
                     src_batch_data = src_batch.data
-                eval_dict.update(dict(batch=generate_wb_image(samples=tgt_batch_data, 
-                                                               inputs=src_batch_data, 
-                                                               num_samples=config.eval.num_save_samples,
-                                                               )
-                                     )
-                                )
+                eval_dict.update(
+                    dict(
+                        batch=generate_wb_image(
+                            samples=tgt_batch_data,
+                            inputs=src_batch_data,
+                            num_samples=config.eval.num_save_samples,
+                        )
+                    )
+                )
                 #####
                 wandb.log(eval_dict, step=step)
                 if config.training.save_checkpoints:
@@ -238,38 +245,46 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                         combined_model,
                         metrics=eval_dict[config.eval.checkpoint_metric],
                     )
-                    
+
                     ###
                     # Add pickled & serialized copied of model weights
                     params_comb, __static = eqx.partition(model, eqx.is_array)
-                    inference_params_comb, __static = eqx.partition(inference_model, eqx.is_array)
-
-                    
+                    inference_params_comb, __static = eqx.partition(
+                        inference_model, eqx.is_array
+                    )
 
                     # pickled
-                    # import pickle 
+                    # import pickle
                     # check_folder_pickle = f"{os.getcwd()}/{workdir}/{config.name}/pickle_checkpoints"
                     # os.makedirs(check_folder_pickle, exist_ok=True)
                     # with open(os.path.join(check_folder_pickle, f'params{step}.pkl'), 'wb') as f:
                     #     pickle.dump(params_comb, f)
-                     
+
                     # serialized
-                    
-                    check_folder_tree = f"{os.getcwd()}/{workdir}/{config.name}/tree_checkpoints"
+
+                    check_folder_tree = (
+                        f"{os.getcwd()}/{workdir}/{config.name}/tree_checkpoints"
+                    )
                     os.makedirs(check_folder_tree, exist_ok=True)
 
-                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"latest_params.eqx"), params_comb)
-                    eqx.tree_serialise_leaves(os.path.join(check_folder_tree, f"latest_inference_params.eqx"), inference_params_comb)
+                    eqx.tree_serialise_leaves(
+                        os.path.join(check_folder_tree, f"latest_params.eqx"),
+                        params_comb,
+                    )
+                    eqx.tree_serialise_leaves(
+                        os.path.join(check_folder_tree, f"latest_inference_params.eqx"),
+                        inference_params_comb,
+                    )
 
                     model_info = {
                         "step": step,
                     }
-                    
-                    with open(os.path.join(check_folder_tree, 'model_info.json'), 'w') as f:
+
+                    with open(
+                        os.path.join(check_folder_tree, "model_info.json"), "w"
+                    ) as f:
                         json.dump(model_info, f)
                     ###
-
-
 
         if config.training.preemption_ckpt and step % config.training.ckpt_freq == 0:
             preemption_ckpt_mngr.save(
