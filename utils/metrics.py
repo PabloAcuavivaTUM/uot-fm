@@ -12,6 +12,7 @@ import ml_collections
 import numpy as np
 import scipy
 import tensorflow as tf
+import wandb
 from tqdm import tqdm
 
 from models import inception
@@ -280,6 +281,416 @@ class MetricComputer:
             self.params, jax.lax.stop_gradient(inception_input)
         )
         return inception_output.squeeze(axis=1).squeeze(axis=1)
+
+    @staticmethod
+    def compute_fid(
+        mu_real: np.ndarray,
+        sigma_real: np.ndarray,
+        mu_gen: np.ndarray,
+        sigma_gen: np.ndarray,
+        eps: float = 1e-6,
+    ) -> np.ndarray:
+        """
+        Compute Frechet Inception Distance (FID) between two distributions.
+        """
+        # compute statistics
+        mu_gen = np.atleast_1d(mu_gen)
+        mu_real = np.atleast_1d(mu_real)
+        sigma_gen = np.atleast_1d(sigma_gen)
+        sigma_real = np.atleast_1d(sigma_real)
+
+        assert (
+            mu_gen.shape == mu_real.shape
+        ), f"Shapes {mu_gen.shape} != {mu_real.shape}"
+        assert (
+            sigma_gen.shape == sigma_real.shape
+        ), f"Shapes {sigma_gen.shape} != {sigma_real.shape}"
+
+        diff = mu_real - mu_gen
+        covmean, _ = scipy.linalg.sqrtm(sigma_real.dot(sigma_gen), disp=False)
+
+        if not np.isfinite(covmean).all():
+            warnings.warn(
+                (
+                    f"fid calculation produces singular product; "
+                    "adding {eps} to diagonal of cov estimates"
+                )
+            )
+            offset = np.eye(sigma_real.shape[0]) * eps
+            covmean = scipy.linalg.sqrtm((sigma_real + offset).dot(sigma_gen + offset))
+
+        # numerical error might give slight imaginary component
+        if np.iscomplexobj(covmean):
+            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-2):
+                m = np.max(np.abs(covmean.imag))
+                raise ValueError(f"Imaginary component {m}")
+            covmean = covmean.real
+
+        tr_covmean = np.trace(covmean)
+        return (
+            diff.dot(diff) + np.trace(sigma_real) + np.trace(sigma_gen) - 2 * tr_covmean
+        )
+
+
+####
+# IN PROGRESS: Cell metric computer
+import io
+from typing import Optional
+
+import matplotlib.pyplot as plt
+from cell_fns.cell_metric_fns import (
+    calculate_same_class_perc,
+    estimate_precision,
+    estimate_recall,
+)
+
+
+def jnp_safe_concat(x: Optional[jax.Array], y: jax.Array):
+    if x is None:
+        return y
+    return jnp.concatenate([x, y])
+
+
+class CellMetricComputer:
+    """
+    Class to compute metrics for evaluation.
+    """
+
+    def __init__(
+        self,
+        config: ml_collections.ConfigDict,
+        shard: jax.sharding.Sharding,
+        eval_src_ds: tf.data.Dataset,
+        eval_ds_tgt: tf.data.Dataset,
+        auxiliary_prep_data: dict,
+        sample_fn: Callable,
+        vae_decode_fn: Optional[Callable] = None,
+        vae_encode_fn: Optional[Callable] = None,
+        is_genot: bool = False,
+    ):
+        # get training config
+        self.num_eval_samples = eval_src_ds.length
+        self.batch_size = config.training.batch_size
+
+        self.return_samples = config.eval.save_samples
+        if self.return_samples:
+            self.num_save_samples = config.eval.num_save_samples
+
+        self.dataset = eval_src_ds
+        self.target_dataset = eval_ds_tgt
+        self.input_shape = config.model.input_shape
+        self.sample_fn = sample_fn
+        self.enable_mse = config.eval.enable_mse
+        self.enable_path_lengths = config.eval.enable_path_lengths
+        if self.enable_mse:
+            self.mse_fn = jax.jit(lambda x, y: jnp.mean((x - y) ** 2))
+        if self.enable_path_lengths:
+            self.rmse_fn = jax.jit(lambda x, y: jnp.mean(jnp.sqrt((x - y) ** 2)))
+        self.shard = shard
+        self.use_vae = config.model.use_vae
+
+        if self.use_vae:
+            assert vae_decode_fn is not None and vae_encode_fn is not None
+            self.vae_decode_fn = vae_decode_fn
+            self.vae_encode_fn = vae_encode_fn
+
+        self.is_genot = is_genot
+
+        self.auxiliary_prep_data = auxiliary_prep_data
+
+        ###
+        # Extract embeddings for metric plotting
+        self.additional_embeddings = dict()
+        additional_embedding = config.data.additional_embedding
+
+        for name, dataset in dict(
+            dataset=self.dataset, target_dataset=self.target_dataset
+        ).items():
+            additional_embedding = {embedding: [] for embedding in additional_embedding}
+            loader = iter(dataset)
+            eval_num_iter = max(self.num_eval_samples // self.batch_size, 1)
+            for _ in tqdm(range(eval_num_iter)):
+                batch = next(loader)
+                for embedding, embedding_value in additional_embedding.items():
+                    embedding_value.append(batch[embedding])
+
+            additional_embedding = {
+                embedding: np.concatenate(embedding_value)
+                for embedding, embedding_value in additional_embedding
+            }
+
+            self.additional_embeddings[name] = additional_embedding
+
+    def compute_metrics(self, model: eqx.Module, key: jr.KeyArray):
+        """
+        Compute metrics for evaluation on cell data.
+
+        Args:
+            model: model to evaluate
+            key: jax random key
+
+        Returns:
+            eval_dict: dictionary with evaluation metrics and samples for wandb logging
+        """
+        eval_dict = {}
+
+        samples = None
+        inputs = None
+        sample_embeddings = {
+            embedding: None for embedding in self.auxiliary_prep_data["embedding"]
+        }
+        mses = []
+        path_lengths = []
+        nfes = []
+
+        # create vmap functions
+        partial_sample_fn = ft.partial(self.sample_fn, model)
+
+        # compute metrics batch-wise
+        eval_num_iter = max(self.num_eval_samples // self.batch_size, 1)
+        loader = iter(self.dataset)
+
+        for _ in tqdm(range(eval_num_iter)):
+            src_batch = next(loader)
+            # padding for last batch if necessary
+            pad_size = self.batch_size - src_batch.data.shape[0]
+            if pad_size > 0:
+                src_batch["data"] = jnp.pad(
+                    src_batch.data, ((0, pad_size), (0, 0), (0, 0), (0, 0))
+                )
+
+            src_batch = jx_device_put(src_batch, self.shard)
+
+            if self.use_vae:
+                inputs = jnp_safe_concat(
+                    inputs, self.vae_decode_fn(src_batch.data) * 0.5 + 0.5
+                )
+            else:
+                inputs = jnp_safe_concat(inputs, src_batch.data * 0.5 + 0.5)
+
+            ####
+            # sample from model
+            if self.is_genot:
+                batch_size = src_batch.data.shape[0]
+                ode_key = jr.split(key, batch_size)
+            else:
+                ode_key = None
+
+            ###
+            # NFE
+            sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch, ode_key)
+            nfes.append(nfe)
+            ###
+            # T - Euclidean distance
+            if self.enable_path_lengths:
+                # Compute Euclidean distance between samples and inputs
+                if pad_size > 0:
+                    path_lengths.append(
+                        self.rmse_fn(
+                            src_batch.data[:-pad_size], sample_batch[:-pad_size]
+                        )
+                    )
+                else:
+                    path_lengths.append(self.rmse_fn(src_batch.data, sample_batch))
+
+            ###
+            # Decode VAE
+            if self.use_vae:
+                sample_batch = jx_device_put(sample_batch, self.shard)
+                sample_batch = self.vae_decode_fn(sample_batch)
+            sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
+
+            if pad_size > 0:
+                src_batch["data"] = src_batch.data[:-pad_size]
+                sample_batch = sample_batch[:-pad_size]
+
+            ####
+            # Compute embeddings
+            for embedding in sample_embeddings:
+                embedding_aux = self.auxiliary_prep_data["embedding"][embedding]
+                sample_embeddings[embedding] = jnp_safe_concat(
+                    sample_embeddings[embedding],
+                    embedding_aux.embedding_fn(
+                        sample_batch,
+                        (sample_batch != 0).astype(sample_batch.dtype),
+                    ),
+                )
+
+            ###
+            # Format samples
+            samples = jnp_safe_concat(samples, sample_batch * 0.5 + 0.5)
+
+        ###
+        # Base metrics
+        eval_dict["nfe"] = jnp.mean(jnp.hstack(nfes))
+        if self.enable_mse:
+            eval_dict["mse"] = jnp.mean(jnp.hstack(mses))
+        if self.enable_path_lengths:
+            eval_dict["path_lengths"] = jnp.mean(jnp.hstack(path_lengths))
+            eval_dict["path_lengths_std"] = jnp.std(jnp.hstack(path_lengths))
+
+        ####
+        # Cell metrics - We estimate segmentation masks with non-zero samples
+        eval_dict_cell = self.compute_cell_metrics(
+            # obj_imgs=samples,
+            # segmentation_masks=(samples != 0).astype(sample_batch.dtype),
+            embeddings=sample_embeddings,
+        )
+        eval_dict.update(eval_dict_cell)
+
+        ###
+        # Sample images
+        if self.return_samples:
+            # TODO: This will raise error unless whe use exactly 3 channels. For now we will use 3 channels so its fine
+            # TODO: We need first to change the VAE for a different number of channels in any case
+            # save image grid loggable to wandb
+            wb_image = generate_wb_image(
+                samples=samples, num_samples=self.num_save_samples
+            )
+            eval_dict["samples"] = wb_image
+
+        return eval_dict
+
+    def compute_cell_metrics(
+        self,
+        # obj_imgs: np.ndarray,
+        # segmentation_masks: np.ndarray,
+        embeddings: dict[str, np.ndarray],
+    ) -> dict:
+        ###
+        # Constants
+        helmholtz_primary = (105 / 255, 0 / 255, 95 / 255)
+        helmholtz_secondary = (255 / 255, 80 / 255, 110 / 255)
+
+        tum_primary = (48 / 255, 112 / 255, 179 / 255)
+        tum_secondary = (94 / 255, 148 / 255, 212 / 255)
+        tum_orange = (227 / 255, 114 / 255, 34 / 255)
+        tum_green = (162 / 255, 173 / 255, 0 / 255)
+        tum_red = (217 / 255, 81 / 255, 23 / 255)
+        tum_gray = (153 / 255, 153 / 255, 153 / 255)
+
+        ###
+        # Compute cell metrics from embeddings
+        eval_dict_cell = dict()
+        for embedding, embedding_value in embeddings.items():
+            source_embedding_value = self.additional_embeddings["dataset"][embedding]
+            target_embedding_value = self.additional_embeddings["target_dataset"][
+                embedding
+            ]
+            ###
+            # FID
+            mu = jnp.mean(embedding_value, axis=0)
+            sigma = jnp.cov(embedding_value, rowvar=False)
+
+            mu_target = jnp.mean(target_embedding_value, axis=0)
+            sigma_target = jnp.cov(target_embedding_value, rowvar=False)
+
+            mu_source = jnp.mean(source_embedding_value, axis=0)
+            sigma_source = jnp.cov(source_embedding_value, rowvar=False)
+
+            eval_dict_cell[f"[{embedding}]-FID-target"] = self.compute_fid(
+                mu_real=mu_target,
+                sigma_real=sigma_target,
+                mu_gen=mu,
+                sigma_gen=sigma,
+            )
+
+            eval_dict_cell[f"[{embedding}]-FID-source"] = self.compute_fid(
+                mu_real=mu_source,
+                sigma_real=sigma_source,
+                mu_gen=mu,
+                sigma_gen=sigma,
+            )
+            ###
+            eval_dict_cell[f"[{embedding}]-SameClassPerc(K1)-target"] = (
+                calculate_same_class_perc(
+                    target_embedding_value,
+                    embedding_value,
+                    top_k=1,
+                )
+            )
+            eval_dict_cell[f"[{embedding}]-SameClassPerc(K3)-target"] = (
+                calculate_same_class_perc(
+                    target_embedding_value,
+                    embedding_value,
+                    top_k=3,
+                )
+            )
+            eval_dict_cell[f"[{embedding}]-SameClassPerc(K5)-target"] = (
+                calculate_same_class_perc(
+                    target_embedding_value,
+                    embedding_value,
+                    top_k=5,
+                )
+            )
+            eval_dict_cell[f"[{embedding}]-SameClassPerc(K10)-target"] = (
+                calculate_same_class_perc(
+                    target_embedding_value,
+                    embedding_value,
+                    top_k=10,
+                )
+            )
+            ####
+            eval_dict_cell[f"[{embedding}]-Precission(K5)-target"] = estimate_precision(
+                target_embedding_value,
+                embedding_value,
+            )
+            eval_dict_cell[f"[{embedding}]-Recall(K5)-target"] = estimate_recall(
+                target_embedding_value,
+                embedding_value,
+            )
+
+            ###
+            # Plotting
+            embedding_aux = self.auxiliary_prep_data["embedding"][embedding]
+            embedding_2d_projection = embedding_aux["embedding_2d_projection"]
+
+            embedding_2d = embedding_2d_projection(embedding_value)
+            source_embedding_2d = embedding_2d_projection(source_embedding_value)
+            target_embedding_2d = embedding_2d_projection(target_embedding_value)
+
+            plt.figure(figsize=(10, 6), dpi=100)
+            plt.scatter(
+                embedding_2d[:, 0],
+                embedding_2d[:, 1],
+                s=20,
+                color=tum_primary,
+                label="TargetFromSource",
+            )
+            plt.scatter(
+                source_embedding_2d[:, 0],
+                source_embedding_2d[:, 1],
+                s=15,
+                color=tum_secondary,
+                label="Source",
+                alpha=0.3,
+            )
+            plt.scatter(
+                target_embedding_2d[:, 0],
+                target_embedding_2d[:, 1],
+                s=15,
+                color=tum_green,
+                label="Target",
+                alpha=0.3,
+            )
+            plt.xticks([])
+            plt.yticks([])
+            plt.box(False)
+            plt.legend(
+                title="Type",
+                title_fontsize=11,
+                fontsize=10,
+                loc="upper left",
+                bbox_to_anchor=(1, 1),
+                frameon=False,
+            )
+            plt.tight_layout()
+
+            # Making figure savable for weight and biases
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png")
+            buf.seek(0)
+            eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(buf)
 
     @staticmethod
     def compute_fid(
