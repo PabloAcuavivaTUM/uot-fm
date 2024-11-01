@@ -2,7 +2,7 @@ import csv
 import glob
 import logging
 import os
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 import jax
@@ -30,14 +30,20 @@ def get_translation_datasets(
     vae_encode_fn: Optional[Callable] = None,
 ) -> List[tf.data.Dataset]:
     """Get translation datasets and prepare them."""
-    train_source, train_target, eval_source, eval_target = get_data(
-        config, shard, vae_encode_fn
+    train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
+        get_data(config, shard, vae_encode_fn)
     )
     train_source_ds = prepare_dataset(train_source, config)
     eval_source_ds = prepare_dataset(eval_source, config, evaluation=True)
     train_target_ds = prepare_dataset(train_target, config)
     eval_target_ds = prepare_dataset(eval_target, config, evaluation=True)
-    return train_source_ds, train_target_ds, eval_source_ds, eval_target_ds
+    return (
+        train_source_ds,
+        train_target_ds,
+        eval_source_ds,
+        eval_target_ds,
+        auxiliary_data_prep,
+    )
 
 
 def prepare_dataset(
@@ -72,6 +78,11 @@ def get_preprocess_fn(config, evaluation: bool = False, precomputing: bool = Fal
     """Get preprocessing function for dataset."""
 
     def process_ds(x: np.ndarray) -> tf.Tensor:
+        if config.data.source == "cell_data":
+            return tf.cast(x, tf.float32)
+
+        ###
+        # Normal image process func
         x = tf.cast(x, tf.float32) / 127.5 - 1.0
         if config.data.source == "celeba_attribute":
             x = tf.image.resize(x, config.data.shape[1:], antialias=True)
@@ -113,6 +124,7 @@ def get_data(
     vae_encode_fn: Optional[Callable] = None,
 ) -> List[Union[np.ndarray, Dict[str, np.ndarray]]]:
     """Load source and target, train and evaluation data."""
+    auxiliary_data_prep = None
 
     if vae_encode_fn is not None:
         preprocess_fn = get_preprocess_fn(config, evaluation=True, precomputing=True)
@@ -194,6 +206,19 @@ def get_data(
             config.training.batch_size,
             additional_embedding=config.data.additional_embedding,
         )
+    elif config.data.target == "cell_data":
+        train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
+            cell_dataset(
+                type_src=config.data.type_src,
+                type_tgt=config.data.type_tgt,
+                batch_size=config.training.batch_size,
+                shard=shard,
+                vae_encode_fn=vae_encode_fn,
+                preprocess_fn=preprocess_fn,
+                channels=config.data.channels,
+                additional_embedding=config.data.additional_embedding,
+            )
+        )
     else:
         raise ValueError(f"Unknown target dataset {config.target_dataset}")
 
@@ -222,6 +247,7 @@ def get_data(
         train_target,
         eval_source,
         eval_target,
+        auxiliary_data_prep,
     )
 
 
@@ -650,3 +676,214 @@ def cifar10(split: str) -> np.ndarray:
         return x_train
     else:
         return x_test
+
+
+####
+# Cell datasets
+# TODO:
+
+import glob
+from copy import deepcopy
+
+import umap
+from campa.constants import campa_config
+from campa.data import MPPData, load_example_data
+from campa.utils import init_logging
+
+from utils.cell_fns.features import (
+    calculate_intensity_features,
+    calculate_morphological_features,
+)
+
+
+def compute_cell_embeddings(
+    obj_imgs: np.ndarray,
+    segmentation_masks: np.ndarray,
+    embedding: str,
+    embedding_kwargs,
+):
+    embedding_fn = None
+
+    embedding_kwargs = deepcopy(
+        embedding_kwargs
+    )  # Most likely unnecesary, but we make sure they stay frozen
+
+    if embedding == "morphological_features":
+        embedding_value = calculate_morphological_features(
+            segmentation_masks, features_list=embedding_kwargs["features_list"]
+        )
+        embedding_value = np.array([emb.to_array() for emb in embedding_value])
+
+        embedding_fn = (
+            lambda obj_imgs, segmentation_masks: calculate_morphological_features(
+                segmentation_masks, features_list=embedding_kwargs["features_list"]
+            )
+        )
+    elif embedding == "channel_features":
+        embedding_value = calculate_intensity_features(
+            obj_imgs, features_list=embedding_kwargs["features_list"]
+        )
+        embedding_value = np.array([emb.to_array() for emb in embedding_value])
+
+        embedding_fn = (
+            lambda obj_imgs, segmentation_masks: calculate_intensity_features(
+                obj_imgs, features_list=embedding_kwargs["features_list"]
+            )
+        )
+
+    elif embedding == "morphological_umap":
+        umap_model = umap.UMAP(**embedding_kwargs)
+        embedding_value = umap_model.fit_transform(
+            segmentation_masks.reshape(segmentation_masks.shape[0], -1)
+        )
+        embedding_fn = lambda obj_imgs, segmentation_masks: umap_model.transform(
+            segmentation_masks.reshape(segmentation_masks.shape[0], -1)
+        )
+    elif embedding == "channel_umaps":
+        umap_model_channels = []
+        embedding_values = []
+        n_channels = obj_imgs.shape[-1]
+        for ichannel in range(n_channels):
+            _obj_imgs = _obj_imgs[:, :, :, ichannel]
+            umap_model = umap.UMAP(**embedding_kwargs)
+            _embedding_value = umap_model.fit_transform(
+                _obj_imgs.reshape(_obj_imgs.shape[0], -1)
+            )
+
+            embedding_values.append(_embedding_value)
+            umap_model_channels.append(umap_model)
+
+        embedding_value = np.concatenate(embedding_values, axis=1)
+
+        def embedding_fn(obj_imgs, segmentation_masks):
+            embedding_values = []
+            for ichannel in range(n_channels):
+                umap_model = umap_model_channels[ichannel]
+                _obj_imgs = obj_imgs[:, :, :, ichannel]
+                _embedding_value = umap_model.transform(
+                    _obj_imgs.reshape(_obj_imgs.shape[0], -1)
+                )
+
+                embedding_values.append(_embedding_value)
+            return np.concatenate(embedding_values, axis=1)
+
+    # Generate embedding 2D projection for eval plotting
+    if embedding_value.shape[1] == 2:
+        embedding_2d_projection = lambda emb: emb
+    else:
+        umap_2d = umap.UMAP(n_components=2, random_state=42)
+        _ = umap_2d.fit_transform(embedding_value)
+        embedding_2d_projection = lambda emb: umap_2d.transform(emb)
+
+    return embedding_value, EasyDict(
+        embedding_fn=embedding_fn,
+        embedding_2d_projection=embedding_2d_projection,
+    )
+
+
+def cell_dataset(
+    type_src: str,
+    type_tgt: str,
+    batch_size: int,
+    shard: Optional[jax.sharding.Sharding] = None,
+    vae_encode_fn: Optional[Callable] = None,
+    preprocess_fn: Optional[Callable] = None,
+    channels: Optional[str] = None,
+    additional_embedding: Optional[Dict[str, Dict[Any]]] = None,
+) -> Tuple[
+    EasyDict,
+    EasyDict,
+    EasyDict,
+]:
+    data_dir = "./data/cell_dataset"
+    additional_embedding = additional_embedding or dict()
+
+    # Prepare src and target for dataset
+    dataset = dict()
+    auxiliary_data_prep = EasyDict()
+    for i, type_name in dict(src=type_src, tgt=type_tgt).items():
+        # Load type of data for each well and assign to i (either src or tgt)
+        obj_imgs_wells = []
+        segmentation_masks_wells = []
+
+        for well_path in glob.glob(os.path.join(data_dir, type_name, "*")):
+            mpp_data = MPPData.from_data_dir(well_path, data_config="ExampleData")
+            if channels:
+                channel_ids = mpp_data.get_channel_ids(channels)
+            else:
+                channel_ids = None
+
+            obj_imgs = mpp_data.get_object_imgs(channel_ids=channel_ids, img_size=256)
+            obj_imgs = np.array(obj_imgs)
+            obj_imgs_wells.append(obj_imgs)
+
+            segmentation_masks = mpp_data.get_object_imgs(img_size=256, data="labels")
+            segmentation_masks = np.array(segmentation_masks)
+            segmentation_masks = (segmentation_masks != 0).astype(np.int8)
+            segmentation_masks_wells.append(obj_imgs_wells)
+
+        obj_imgs_wells = jnp.concat(obj_imgs_wells)
+        segmentation_masks_wells = jnp.concat(segmentation_masks_wells)
+
+        c = obj_imgs_wells.shape[-1]
+        obj_imgs_wells_max = np.max(obj_imgs_wells.reshape(-1, c), axis=0).reshape(
+            1, 1, 1, c
+        )
+
+        obj_imgs_wells = 2.0 * (
+            obj_imgs_wells / obj_imgs_wells_max - 0.5
+        )  # [-1,1] range for images
+        dataset[i] = (obj_imgs_wells, segmentation_masks_wells)
+        auxiliary_data_prep[i] = dict(max=obj_imgs_wells_max)
+
+    N_src = len(dataset["src"][0])
+
+    obj_imgs_both = jnp.concatenate(dataset["src"][0], dataset["tgt"][0])
+    segmentation_masks_both = jnp.concatenate(dataset["src"][1], dataset["tgt"][1])
+
+    embeddings = dict()
+    auxiliary_data_prep["embedding"] = dict()
+    for embedding, embedding_kwargs in additional_embedding.items():
+        embedding_value, embedding_aux = compute_cell_embeddings(
+            obj_imgs_both,
+            segmentation_masks_both,
+            embedding=embedding,
+            embedding_kwargs=embedding_kwargs,
+        )
+        embeddings[embedding] = embedding_value
+        auxiliary_data_prep["embedding"][embeddings] = embedding_aux
+
+    if vae_encode_fn is not None:
+        preprocessed_obj_imgs_both = [
+            preprocess_fn(obj_img) for obj_img in obj_imgs_both
+        ]
+        obj_imgs_both_vae = compute_vae_encoding(
+            preprocessed_obj_imgs_both,
+            vae_encode_fn=vae_encode_fn,
+            batch_size=batch_size,
+            shard=shard,
+        )
+        src_data = EasyDict(data=obj_imgs_both_vae[:N_src])
+        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:])
+    else:
+        src_data = EasyDict(data=obj_imgs_both_vae[:N_src])
+        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:])
+
+    src_data["segmentation_mask"] = segmentation_masks_both[:N_src]
+    tgt_data["segmentation_mask"] = segmentation_masks_both[N_src:]
+
+    for embedding, embedding_value in embeddings.items():
+        src_data[embedding] = embedding_value[:N_src]
+        tgt_data[embedding] = embedding_value[N_src:]
+
+    # TODO: Any data augmentation: Rotations?
+
+    n_train = int(0.75 * N_src)
+
+    train_src = EasyDict(**{k: v[:n_train] for k, v in src_data.items()})
+    eval_src = EasyDict(**{k: v[n_train:] for k, v in src_data.items()})
+
+    # Eval target is not used, therefore to get a bit more target data, we just copy the train tgt dataset for it
+    train_tgt = eval_tgt = tgt_data
+
+    return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep
