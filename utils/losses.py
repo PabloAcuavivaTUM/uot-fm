@@ -12,17 +12,8 @@ from .miscellaneous import EasyDict
 from functools import reduce, partial
 from copy import deepcopy
 
-# Two low dimensional matrices AA^T
-# Fix rn_positions  
 
 from typing import Optional 
-
-
-# rn_positions = jr.choice(key=key_choice, a=jnp.arange(independent_terms), shape=(n,))
-
-# N(0, SIGMA = AA^T))
-
-# N(0, I) -> SVD -> Taking biggest singular values ->
 
 def get_correlated_multivariate_normal_fn(n, independent_terms, key):
     rn_positions = jr.choice(key=key, a=jnp.arange(independent_terms), shape=(n,))
@@ -228,9 +219,11 @@ class FlowMatching:
                 raise ValueError(f'Invalid genot noise {self.genot.noise} given.')
             
             self.x0_add_alpha = self.genot.get('x0_add_alpha', None)
+            self.use_fb_embedding = self.genot.get('use_fb_embedding', False)
         else:
             self.noise_genot = None
             self.x0_add_alpha = None 
+            self.use_fb_embedding = False
 
     @staticmethod
     def compute_flow(x1: jax.Array, x0: jax.Array) -> jax.Array:
@@ -298,17 +291,29 @@ class FlowMatching:
                 
                 if self.x0_add_alpha is not None: # Only apply x0_add_alpha to conditional model 
                     alpha = self.x0_add_alpha 
-                    src_data = jax.lax.cond(classifier_free_mask,  
-                                        lambda: src_data, 
-                                        lambda: alpha*x0.data + (1-alpha)*src_data,
-                                        )
+                    if alpha < 1.0:
+                        src_data = jax.lax.cond(classifier_free_mask,  
+                                            lambda: src_data, 
+                                            lambda: alpha*x0.data + (1-alpha)*src_data,
+                                            )
+                    else:
+                        src_data = jax.lax.cond(classifier_free_mask,  
+                                            lambda: src_data, 
+                                            lambda: x0.data + (alpha-1)*src_data,
+                                            )
                          
        
                 # Generating back conditioning x0 (to push towards keeping features)
                 key, subkey = jr.split(key, 2)
-                tgt_data = jax.lax.cond(jr.uniform(key=subkey) < self.genot.x0_prob,  
+                mask_back = jr.uniform(key=subkey) < self.genot.x0_prob
+                tgt_data = jax.lax.cond(mask_back,  
                                         lambda: x0.data, 
                                         lambda: x1.data,
+                                        )
+                if self.use_fb_embedding:
+                    film_cond = jax.lax.cond(mask_back,  
+                                        lambda: jnp.concatenate((film_cond, jr.normal(jr.key(42), shape=(self.use_fb_embedding,)),)), 
+                                        lambda: jnp.concatenate((film_cond, jnp.zeros(shape=(self.use_fb_embedding,)))),
                                         )
             else:
                 src_data = x0.data
@@ -388,6 +393,9 @@ class FlowMatching:
                 if self.is_genot and self.x0_plus_noise:
                     x_t = jnp.concatenate((x_t, x0.data), axis=0)
 
+                if self.use_fb_embedding:
+                    film_cond = jnp.concatenate((film_cond, jnp.zeros(shape=(self.use_fb_embedding,))))
+
                 
                 return model(t, x_t, 
                             film_cond=film_cond, 
@@ -415,7 +423,11 @@ class FlowMatching:
                 src_data = self.noise_genot(key, x0_data=x0.data, shape=x0.data.shape)
                 if self.x0_add_alpha is not None:
                     alpha = self.x0_add_alpha 
-                    src_data = alpha*x0.data + (1-alpha)*src_data
+                    if alpha < 1.0:
+                        
+                        src_data = alpha*x0.data + (1-alpha)*src_data
+                    else:
+                        src_data = x0.data + (alpha-1)*src_data
             else:
                 src_data = x0.data
 

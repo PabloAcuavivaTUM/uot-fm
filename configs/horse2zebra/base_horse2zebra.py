@@ -16,6 +16,7 @@ def get_horse2zebra_config(config):
     data.shape = [3, 256, 256]
     data.shuffle_buffer = 10_000
     data.additional_embedding = None
+    data.low_pass_filter = None
 
     
     

@@ -20,5 +20,6 @@ def get_celeba_config(config):
     data.random_crop = True
     data.crop_shape = [256, 256, 3]
     data.additional_embedding = None
+    data.low_pass_filter = None
 
     return config

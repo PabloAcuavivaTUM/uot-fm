@@ -16,7 +16,7 @@ from tqdm import tqdm
 from utils import GenerationSampler
 from .miscellaneous import EasyDict
 from models import get_clip_fns
-
+from .transforms import low_pass_filter 
 
 # TODO: Once verified the code is properly working, change "map_forward" so that is works for all datasets in translation, simply switch  
 #  the source and the target dataset after getting the data if need be and remove all references thereafter 
@@ -32,6 +32,12 @@ def get_translation_datasets(
     train_source, train_target, eval_source, eval_target = get_data(
         config, shard, vae_encode_fn
     )
+    if config.data.low_pass_filter:
+        train_source["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in train_source.data])
+        train_target["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in train_target.data])
+        eval_source["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in eval_source.data])
+        eval_target["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in eval_target.data])
+
     train_source_ds = prepare_dataset(train_source, config)
     eval_source_ds = prepare_dataset(eval_source, config, evaluation=True)
     train_target_ds = prepare_dataset(train_target, config)

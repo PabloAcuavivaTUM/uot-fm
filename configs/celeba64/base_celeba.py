@@ -16,5 +16,6 @@ def get_celeba_config(config):
     data.shuffle_buffer = 10_000
     data.random_crop = False
     data.eval_paired = True
+    data.low_pass_filter = None
 
     return config
