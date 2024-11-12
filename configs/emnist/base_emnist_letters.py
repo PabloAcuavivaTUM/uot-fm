@@ -21,5 +21,6 @@ def get_emnist_letters_config(config):
     data.precomputed_stats_file = "emnist_letters"
     data.shuffle_buffer = 10_000
     data.eval_labels = [0, 1, 2]
+    data.low_pass_filter = None
 
     return config

@@ -16,7 +16,7 @@ def get_config():
     config.training.tau_b = 0.95
 
 
-    config.name = f"celeba256-male-genot-otclip-FiLM(All)-MLPFiLM"
+    config.name = f"celeba256-male-genot-otclip-FiLM(All)-MLPFiLM-II"
     config.wandb_group = "genot"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
@@ -26,8 +26,8 @@ def get_config():
 
     config.data.additional_embedding = "clip"
     config.model.film_cond_dim = 512
-    config.overfit_to_one_batch = True
-    
+    # config.overfit_to_one_batch = True
+
     config.model.film_resolutions_down = [i for i in range(200)] # This could be 4, 8, 16, 32 
     config.model.film_resolutions_up = [i for i in range(200)]   # This could be 4, 8, 16, 32
     config.model.film_down = [True, True, True, True] 

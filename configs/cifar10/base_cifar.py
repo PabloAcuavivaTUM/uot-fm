@@ -22,6 +22,7 @@ def get_cifar_config(config):
     data.shuffle_buffer = 10_000
     data.eval_paired = False
     data.do_flip = True
+    data.low_pass_filter = None
 
     config.eval.labelwise = False
     config.eval.eval_samples = 50000
