@@ -85,7 +85,9 @@ def get_preprocess_fn(config, evaluation: bool = False, precomputing: bool = Fal
     """Get preprocessing function for dataset."""
 
     def process_ds(x: np.ndarray) -> tf.Tensor:
-        if config.data.source == "cell_data":
+        ###
+        # Quick hack for campa images 
+        if config.data.source == "campa_cell":
             return tf.cast(x, tf.float32)
 
         ###
@@ -213,9 +215,9 @@ def get_data(
             config.training.batch_size,
             additional_embedding=config.data.additional_embedding,
         )
-    elif config.data.target == "cell_data":
+    elif config.data.target == "campa_cell":
         train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
-            cell_dataset(
+            campa_cell(
                 type_src=config.data.type_src,
                 type_tgt=config.data.type_tgt,
                 batch_size=config.training.batch_size,
@@ -224,10 +226,11 @@ def get_data(
                 preprocess_fn=preprocess_fn,
                 channels=config.data.channels,
                 additional_embedding=config.data.additional_embedding,
+                embedding_combinations=config.data.embedding_combinations,
             )
         )
     else:
-        raise ValueError(f"Unknown target dataset {config.target_dataset}")
+        raise ValueError(f"Unknown target dataset {config.target.data}")
 
     # for translation between different datasets. Not implemented. For now target = source
     if config.data.source == "gaussian":
@@ -239,6 +242,8 @@ def get_data(
     elif config.data.source == "emnist":
         pass
     elif config.data.source == "celeba_fake":
+        pass
+    elif config.data.source == "campa_cell":
         pass
     else:
         raise ValueError(f"Unknown source dataset {config.data.source}")
@@ -687,15 +692,9 @@ def cifar10(split: str) -> np.ndarray:
 
 ####
 # Cell datasets
-# TODO:
-
 import glob
 from copy import deepcopy
-
 import umap
-from campa.constants import campa_config
-from campa.data import MPPData, load_example_data
-from campa.utils import init_logging
 
 from utils.cell_fns.features import (
     calculate_intensity_features,
@@ -746,12 +745,12 @@ def compute_cell_embeddings(
         embedding_fn = lambda obj_imgs, segmentation_masks: umap_model.transform(
             segmentation_masks.reshape(segmentation_masks.shape[0], -1)
         )
-    elif embedding == "channel_umaps":
+    elif embedding == "channel_umap":
         umap_model_channels = []
         embedding_values = []
         n_channels = obj_imgs.shape[-1]
         for ichannel in range(n_channels):
-            _obj_imgs = _obj_imgs[:, :, :, ichannel]
+            _obj_imgs = obj_imgs[:, :, :, ichannel]
             umap_model = umap.UMAP(**embedding_kwargs)
             _embedding_value = umap_model.fit_transform(
                 _obj_imgs.reshape(_obj_imgs.shape[0], -1)
@@ -761,7 +760,7 @@ def compute_cell_embeddings(
             umap_model_channels.append(umap_model)
 
         embedding_value = np.concatenate(embedding_values, axis=1)
-
+    
         def embedding_fn(obj_imgs, segmentation_masks):
             embedding_values = []
             for ichannel in range(n_channels):
@@ -773,6 +772,8 @@ def compute_cell_embeddings(
 
                 embedding_values.append(_embedding_value)
             return np.concatenate(embedding_values, axis=1)
+    else: 
+        raise ValueError(f'Invalid cell embedding {embedding} asked for.')
 
     # Generate embedding 2D projection for eval plotting
     if embedding_value.shape[1] == 2:
@@ -788,7 +789,7 @@ def compute_cell_embeddings(
     )
 
 
-def cell_dataset(
+def campa_cell(
     type_src: str,
     type_tgt: str,
     batch_size: int,
@@ -796,69 +797,105 @@ def cell_dataset(
     vae_encode_fn: Optional[Callable] = None,
     preprocess_fn: Optional[Callable] = None,
     channels: Optional[str] = None,
-    additional_embedding: Optional[Dict[str, Dict[Any]]] = None,
+    additional_embedding: Optional[Dict[str, Dict[str, Any]]] = None,
+    embedding_combinations : Optional[Dict[str,list[str]]] = None,
+    n_train_perc : float = 0.75,
 ) -> Tuple[
     EasyDict,
     EasyDict,
     EasyDict,
 ]:
-    data_dir = "./data/cell_dataset"
+    data_dir = "/lustre/groups/ml01/workspace/fm_cv/np_campa"
     additional_embedding = additional_embedding or dict()
+    embedding_combinations = embedding_combinations or dict()
 
     # Prepare src and target for dataset
     dataset = dict()
     auxiliary_data_prep = EasyDict()
-    for i, type_name in dict(src=type_src, tgt=type_tgt).items():
+    for i, type_name in [("src", type_src), ("tgt", type_tgt)]:
         # Load type of data for each well and assign to i (either src or tgt)
         obj_imgs_wells = []
         segmentation_masks_wells = []
 
         for well_path in glob.glob(os.path.join(data_dir, type_name, "*")):
-            mpp_data = MPPData.from_data_dir(well_path, data_config="ExampleData")
-            if channels:
-                channel_ids = mpp_data.get_channel_ids(channels)
-            else:
-                channel_ids = None
-
-            obj_imgs = mpp_data.get_object_imgs(channel_ids=channel_ids, img_size=256)
-            obj_imgs = np.array(obj_imgs)
+            obj_imgs = None 
+            for channel in channels:
+                objs_channel = np.load(os.path.join(well_path, f"{channel}.npy"))
+                if obj_imgs is None:
+                    obj_imgs = objs_channel
+                else:
+                    obj_imgs = np.concatenate((obj_imgs, objs_channel), axis=-1) 
             obj_imgs_wells.append(obj_imgs)
 
-            segmentation_masks = mpp_data.get_object_imgs(img_size=256, data="labels")
-            segmentation_masks = np.array(segmentation_masks)
-            segmentation_masks = (segmentation_masks != 0).astype(np.int8)
-            segmentation_masks_wells.append(obj_imgs_wells)
 
-        obj_imgs_wells = jnp.concat(obj_imgs_wells)
-        segmentation_masks_wells = jnp.concat(segmentation_masks_wells)
+            segmentation_masks = np.load(os.path.join(well_path, f"segmentation_masks.npy"))
+            segmentation_masks_wells.append(segmentation_masks)
+        obj_imgs_wells = np.concatenate(obj_imgs_wells)
+        segmentation_masks_wells = np.concatenate(segmentation_masks_wells)
 
-        c = obj_imgs_wells.shape[-1]
-        obj_imgs_wells_max = np.max(obj_imgs_wells.reshape(-1, c), axis=0).reshape(
-            1, 1, 1, c
+        C = len(channels)
+        obj_imgs_wells_max = np.max(obj_imgs_wells.reshape(-1, C), axis=0).reshape(
+            1, 1, 1, C
         )
 
+        # Make images into [-1,1] range
         obj_imgs_wells = 2.0 * (
             obj_imgs_wells / obj_imgs_wells_max - 0.5
-        )  # [-1,1] range for images
+        )  
+
+        ###
+        # [FILTERING] Remove outliers and errors, cell too small to be seen
+        npixels = np.prod(segmentation_masks_wells[0].shape)
+        too_small_mask = np.array([segmentation_mask.sum() / npixels < 0.05 for segmentation_mask in segmentation_masks_wells])
+
+        obj_imgs_wells = obj_imgs_wells[~too_small_mask]
+        segmentation_masks_wells = segmentation_masks_wells[~too_small_mask]
+        ###
+
         dataset[i] = (obj_imgs_wells, segmentation_masks_wells)
         auxiliary_data_prep[i] = dict(max=obj_imgs_wells_max)
 
     N_src = len(dataset["src"][0])
 
-    obj_imgs_both = jnp.concatenate(dataset["src"][0], dataset["tgt"][0])
-    segmentation_masks_both = jnp.concatenate(dataset["src"][1], dataset["tgt"][1])
+    obj_imgs_both = np.concatenate([dataset["src"][0], dataset["tgt"][0]])
+    segmentation_masks_both = np.concatenate([dataset["src"][1], dataset["tgt"][1]])
+    # TODO: Any data augmentation: Rotations?
+
 
     embeddings = dict()
     auxiliary_data_prep["embedding"] = dict()
     for embedding, embedding_kwargs in additional_embedding.items():
+        # Hack to only give one specific channel embedding
+        __obj_imgs_both = obj_imgs_both
+        embedding_name = embedding
+
+        if isinstance(embedding, tuple):
+            channel = embedding[1]
+            embedding = embedding[0]
+            idchannel = [i for i, item in enumerate(channels) if channel == item].pop()
+
+            embedding_name = embedding + '_' + channel
+            __obj_imgs_both = obj_imgs_both[:,:,:,idchannel:idchannel+1]
+            
         embedding_value, embedding_aux = compute_cell_embeddings(
-            obj_imgs_both,
+            __obj_imgs_both,
             segmentation_masks_both,
             embedding=embedding,
             embedding_kwargs=embedding_kwargs,
         )
-        embeddings[embedding] = embedding_value
-        auxiliary_data_prep["embedding"][embeddings] = embedding_aux
+        embeddings[embedding_name] = embedding_value
+        auxiliary_data_prep["embedding"][embedding_name] = embedding_aux
+        
+    # Create embedding combinations
+    for embedding_combination_name, embedding_names in embedding_combinations:
+        embedding_combination = None 
+        for embedding_name in embedding_names:
+            if embedding_combination is None:
+                embedding_combination = embeddings[embedding_name]
+            else:        
+                embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
+        embeddings[embedding_combination_name] = embedding_combination
+
 
     if vae_encode_fn is not None:
         preprocessed_obj_imgs_both = [
@@ -870,11 +907,11 @@ def cell_dataset(
             batch_size=batch_size,
             shard=shard,
         )
-        src_data = EasyDict(data=obj_imgs_both_vae[:N_src])
-        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:])
+        src_data = EasyDict(data=obj_imgs_both_vae[:N_src]) # , uncompressed_data=obj_imgs_both[:N_src])
+        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:]) # , uncompressed_data=obj_imgs_both[N_src:])
     else:
-        src_data = EasyDict(data=obj_imgs_both_vae[:N_src])
-        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:])
+        src_data = EasyDict(data=obj_imgs_both[:N_src])
+        tgt_data = EasyDict(data=obj_imgs_both[N_src:])
 
     src_data["segmentation_mask"] = segmentation_masks_both[:N_src]
     tgt_data["segmentation_mask"] = segmentation_masks_both[N_src:]
@@ -883,9 +920,7 @@ def cell_dataset(
         src_data[embedding] = embedding_value[:N_src]
         tgt_data[embedding] = embedding_value[N_src:]
 
-    # TODO: Any data augmentation: Rotations?
-
-    n_train = int(0.75 * N_src)
+    n_train = int(n_train_perc * N_src)
 
     train_src = EasyDict(**{k: v[:n_train] for k, v in src_data.items()})
     eval_src = EasyDict(**{k: v[n_train:] for k, v in src_data.items()})
