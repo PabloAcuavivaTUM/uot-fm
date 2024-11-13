@@ -247,9 +247,28 @@ all_morphological_features = [
     "centroid",
     "filled_area",
     "aspect_ratio",
-    "central_moments",
-    "hu_moments",
+    # "central_moments",
+    # "hu_moments", # ! TODO: Look into them, for now deprectaed
 ] + list(morphological_features_registry.registry.keys())
+
+# TODO: not the best way to save normalizing constants, but good enough for now. Just ot have in range where matching is meaningful
+morphological_features_norm_constants = {
+    'area': (3.423000e+03, 6.340000e+04),
+    'perimeter': (2.848122e+02, 1.770947e+03),
+    'eccentricity': (8.980376e-02, 9.755505e-01),
+    'solidity': (6.026649e-01, 9.962288e-01),
+    'major_axis_length': (7.963098e+01, 3.473195e+02),
+    'minor_axis_length': (5.039151e+01, 2.781226e+02),
+    'orientation': (-1.570730e+00, 1.570705e+00),
+    'circularity': (1.865850e-01, 8.002663e-01),
+    'convex_area': (3.942000e+03, 6.364000e+04),
+    'extent': (3.860294e-01, 9.674072e-01),
+    'equivalent_diameter': (6.601741e+01, 2.841186e+02),
+    'bbox': (0.0, 256),
+    'centroid': (0.0, 256.0),
+    'filled_area': (3.423000e+03, 6.340000e+04),
+    'aspect_ratio': (1.004057e+00, 4.550102e+00)
+}
 
 
 def calculate_single_cell_morphological_features(segmentation_mask: np.ndarray):
@@ -269,13 +288,13 @@ def calculate_single_cell_morphological_features(segmentation_mask: np.ndarray):
         region_props = regions[0]
 
         # Extract  central moments
-        moments = measure.moments_central(
-            clean_binary_image,
-            center=(region_props.centroid[0], region_props.centroid[1]),
-            order=4,
-        )
+        # moments = measure.moments_central(
+        #     clean_binary_image,
+        #     center=(region_props.centroid[0], region_props.centroid[1]),
+        #     order=4,
+        # )
 
-        hu_moments = measure.moments_hu(moments)
+        #hu_moments = measure.moments_hu(moments)
 
         img_morphological_features = FeaturesDict(
             **{
@@ -294,8 +313,8 @@ def calculate_single_cell_morphological_features(segmentation_mask: np.ndarray):
                 "centroid": region_props.centroid,
                 "filled_area": region_props.filled_area,
                 "aspect_ratio": region_props.major_axis_length / region_props.minor_axis_length,
-                "central_moments": moments,
-                "hu_moments": hu_moments,
+                #"central_moments": moments,
+                #"hu_moments": hu_moments,
             }
         )
 
@@ -320,11 +339,16 @@ def calculate_morphological_features(
 
     for feature in features_list:
         if feature in morphological_features_bulk:
-            img_morphological_features[feature] = morphological_features_bulk[feature]
+            feature_value = morphological_features_bulk[feature]
         else:
-
             feature_stat = morphological_features_registry.apply_fn(feature, flatten_segmentation_masks)
             feature_stat = np.where(np.isnan(feature_stat), 0, feature_stat)
-            img_morphological_features[feature] = feature_stat
+            feature_value = feature_stat
+        
+        # Normalize feature
+        _min, _max = morphological_features_norm_constants.get(feature, (0, 1))
+        feature_value = (feature_value - _min) / (_max - _min)
+
+        img_morphological_features[feature] = feature_value 
 
     return img_morphological_features.unstack()
