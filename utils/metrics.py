@@ -350,6 +350,27 @@ def jnp_safe_concat(x: Optional[jax.Array], y: jax.Array):
         return y
     return jnp.concatenate([x, y])
 
+def np_safe_concat(x: Optional[np.ndarray], y: np.ndarray):
+    if x is None:
+        return y
+    return np.concatenate([x, y])
+
+
+def easy_pad(easy_dict: EasyDict, pad_size: int):
+    return EasyDict(
+        **{
+            k: jnp.pad(
+                v, [(0, pad_size)] + [(0, 0) for _ in v.shape[1:]],
+            )
+            for k, v in easy_dict.items()
+        }
+    )
+
+
+def easy_unpad(easy_dict : EasyDict, pad_size : int):
+    return EasyDict(**{k: v[:-pad_size] for k,v in easy_dict.items()})
+
+                
 
 class CellMetricComputer:
     """
@@ -407,16 +428,16 @@ class CellMetricComputer:
             dataset=self.dataset, target_dataset=self.target_dataset
         ).items():
             additional_embedding = {embedding: [] for embedding in additional_embedding}
+            eval_num_iter = dataset.length // self.batch_size + 1
             loader = iter(dataset)
-            eval_num_iter = max(self.num_eval_samples // self.batch_size, 1)
             for _ in tqdm(range(eval_num_iter)):
                 batch = next(loader)
                 for embedding, embedding_value in additional_embedding.items():
-                    embedding_value.append(batch[embedding])
+                    embedding_value.append(np.asarray(batch[embedding]))
 
             additional_embedding = {
                 embedding: np.concatenate(embedding_value)
-                for embedding, embedding_value in additional_embedding
+                for embedding, embedding_value in additional_embedding.items()
             }
 
             self.additional_embeddings[name] = additional_embedding
@@ -435,7 +456,9 @@ class CellMetricComputer:
         eval_dict = {}
 
         samples = None
+        sample_segmentation_mask_approx = None
         inputs = None
+        inputs_segmentation_mask = None
         sample_embeddings = {
             embedding: None for embedding in self.auxiliary_data_prep["embedding"]
         }
@@ -447,17 +470,17 @@ class CellMetricComputer:
         partial_sample_fn = ft.partial(self.sample_fn, model)
 
         # compute metrics batch-wise
-        eval_num_iter = max(self.num_eval_samples // self.batch_size, 1)
+        eval_num_iter = self.num_eval_samples // self.batch_size + 1
         loader = iter(self.dataset)
 
         for _ in tqdm(range(eval_num_iter)):
             src_batch = next(loader)
             # padding for last batch if necessary
             pad_size = self.batch_size - src_batch.data.shape[0]
+
+            inputs_segmentation_mask = jnp_safe_concat(inputs_segmentation_mask, src_batch.segmentation_mask)
             if pad_size > 0:
-                src_batch["data"] = jnp.pad(
-                    src_batch.data, ((0, pad_size), (0, 0), (0, 0), (0, 0))
-                )
+                src_batch = easy_pad(src_batch, pad_size)
 
             src_batch = jx_device_put(src_batch, self.shard)
 
@@ -501,25 +524,31 @@ class CellMetricComputer:
                 sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
 
             if pad_size > 0:
-                src_batch["data"] = src_batch.data[:-pad_size]
+                src_batch = easy_unpad(src_batch, pad_size)
                 sample_batch = sample_batch[:-pad_size]
 
             ####
             # Compute embeddings
-            for embedding in sample_embeddings:
-                embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
-                sample_embeddings[embedding] = jnp_safe_concat(
-                    sample_embeddings[embedding],
-                    embedding_aux.embedding_fn(
-                        sample_batch,
-                        (sample_batch != 0).astype(sample_batch.dtype),
-                    ),
-                )
+            # Make a tolerance > epsilon? For more numerically stable images?
+            sample_segmentation_mask_approx_batch = jnp.expand_dims(
+                ((0.5*sample_batch+0.5) > 0.0).any(axis=-1), 
+                axis=-1
+            ).astype(src_batch.segmentation_mask.dtype)
 
             ###
             # Format samples
-            samples = jnp_safe_concat(samples, sample_batch * 0.5 + 0.5)
+            samples = jnp_safe_concat(samples, sample_batch)
+            sample_segmentation_mask_approx = jnp_safe_concat(sample_segmentation_mask_approx, sample_segmentation_mask_approx_batch)
 
+        for embedding in sample_embeddings:
+            embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
+            sample_embeddings[embedding] = embedding_aux.embedding_fn(
+                    np.asarray(samples),
+                    np.asarray(sample_segmentation_mask_approx),
+                )
+        # Make into [0,1] domain 
+        samples = 0.5* samples + 0.5
+                
         ###
         # Base metrics
         eval_dict["nfe"] = jnp.mean(jnp.hstack(nfes))
@@ -530,10 +559,8 @@ class CellMetricComputer:
             eval_dict["path_lengths_std"] = jnp.std(jnp.hstack(path_lengths))
 
         ####
-        # Cell metrics - We estimate segmentation masks with non-zero samples
+        # Cell metrics 
         eval_dict_cell = self.compute_cell_metrics(
-            # obj_imgs=samples,
-            # segmentation_masks=(samples != 0).astype(sample_batch.dtype),
             embeddings=sample_embeddings,
         )
         eval_dict.update(eval_dict_cell)
@@ -541,13 +568,16 @@ class CellMetricComputer:
         ###
         # Sample images
         if self.return_samples:
-            # TODO: This will raise error unless whe use exactly 3 channels. For now we will use 3 channels so its fine
-            # TODO: We need first to change the VAE for a different number of channels in any case
-            # save image grid loggable to wandb
             wb_image = generate_wb_image(
-                samples=samples, num_samples=self.num_save_samples
+                samples=samples, inputs=inputs, num_samples=self.num_save_samples
             )
             eval_dict["samples"] = wb_image
+
+            wb_image = generate_wb_image(
+                samples=sample_segmentation_mask_approx, inputs=inputs, num_samples=self.num_save_samples
+            )
+            eval_dict["segmentation_mask_samples"] = wb_image
+
 
         return eval_dict
 
@@ -579,14 +609,14 @@ class CellMetricComputer:
             ]
             ###
             # FID
-            mu = jnp.mean(embedding_value, axis=0)
-            sigma = jnp.cov(embedding_value, rowvar=False)
+            mu = np.mean(embedding_value, axis=0)
+            sigma = np.cov(embedding_value, rowvar=False)
+            
+            mu_target = np.mean(target_embedding_value, axis=0)
+            sigma_target = np.cov(target_embedding_value, rowvar=False)
 
-            mu_target = jnp.mean(target_embedding_value, axis=0)
-            sigma_target = jnp.cov(target_embedding_value, rowvar=False)
-
-            mu_source = jnp.mean(source_embedding_value, axis=0)
-            sigma_source = jnp.cov(source_embedding_value, rowvar=False)
+            mu_source = np.mean(source_embedding_value, axis=0)
+            sigma_source = np.cov(source_embedding_value, rowvar=False)
 
             eval_dict_cell[f"[{embedding}]-FID-target"] = self.compute_fid(
                 mu_real=mu_target,
@@ -651,17 +681,10 @@ class CellMetricComputer:
 
             plt.figure(figsize=(10, 6), dpi=100)
             plt.scatter(
-                embedding_2d[:, 0],
-                embedding_2d[:, 1],
-                s=20,
-                color=tum_primary,
-                label="TargetFromSource",
-            )
-            plt.scatter(
                 source_embedding_2d[:, 0],
                 source_embedding_2d[:, 1],
                 s=15,
-                color=tum_secondary,
+                color=tum_primary,
                 label="Source",
                 alpha=0.3,
             )
@@ -672,6 +695,14 @@ class CellMetricComputer:
                 color=tum_green,
                 label="Target",
                 alpha=0.3,
+            )
+            plt.scatter(
+                embedding_2d[:, 0],
+                embedding_2d[:, 1],
+                s=20,
+                color=tum_red,
+                label="TargetFromSource",
+                marker='x'
             )
             plt.xticks([])
             plt.yticks([])
@@ -690,7 +721,11 @@ class CellMetricComputer:
             with io.BytesIO() as buf:
                 plt.savefig(buf, format="png")
                 buf.seek(0)
-                eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(buf)
+                eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(Image.open(buf))
+                plt.close()
+            
+        return eval_dict_cell
+            
 
     @staticmethod
     def compute_fid(
