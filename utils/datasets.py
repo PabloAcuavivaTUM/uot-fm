@@ -705,7 +705,7 @@ from utils.cell_fns.features import (
 def compute_cell_embeddings(
     obj_imgs: np.ndarray,
     segmentation_masks: np.ndarray,
-    embedding: str,
+    embedding_type: str,
     embedding_kwargs,
 ):
     embedding_fn = None
@@ -714,7 +714,7 @@ def compute_cell_embeddings(
         embedding_kwargs
     )  # Most likely unnecesary, but we make sure they stay frozen
 
-    if embedding == "morphological_features":
+    if embedding_type == "morphological_features":
         embedding_value = calculate_morphological_features(
             segmentation_masks, features_list=embedding_kwargs["features_list"]
         )
@@ -725,7 +725,7 @@ def compute_cell_embeddings(
                 segmentation_masks, features_list=embedding_kwargs["features_list"]
             )
         )
-    elif embedding == "channel_features":
+    elif embedding_type == "channel_features":
         embedding_value = calculate_intensity_features(
             obj_imgs, features_list=embedding_kwargs["features_list"]
         )
@@ -737,7 +737,7 @@ def compute_cell_embeddings(
             )
         )
 
-    elif embedding == "morphological_umap":
+    elif embedding_type == "morphological_umap":
         umap_model = umap.UMAP(**embedding_kwargs)
         embedding_value = umap_model.fit_transform(
             segmentation_masks.reshape(segmentation_masks.shape[0], -1)
@@ -745,7 +745,7 @@ def compute_cell_embeddings(
         embedding_fn = lambda obj_imgs, segmentation_masks: umap_model.transform(
             segmentation_masks.reshape(segmentation_masks.shape[0], -1)
         )
-    elif embedding == "channel_umap":
+    elif embedding_type == "channel_umap":
         umap_model_channels = []
         embedding_values = []
         n_channels = obj_imgs.shape[-1]
@@ -773,7 +773,7 @@ def compute_cell_embeddings(
                 embedding_values.append(_embedding_value)
             return np.concatenate(embedding_values, axis=1)
     else: 
-        raise ValueError(f'Invalid cell embedding {embedding} asked for.')
+        raise ValueError(f'Invalid cell embedding {embedding_type} asked for.')
 
     # Generate embedding 2D projection for eval plotting
     if embedding_value.shape[1] == 2:
@@ -863,31 +863,30 @@ def campa_cell(
 
 
     embeddings = dict()
-    auxiliary_data_prep["embedding"] = dict()
-    for embedding, embedding_kwargs in additional_embedding.items():
+    aux_embedding =  dict()
+    for embedding_name, embedding_kwargs in additional_embedding.items():
         # Hack to only give one specific channel embedding
         __obj_imgs_both = obj_imgs_both
-        embedding_name = embedding
+        embedding_type, embedding_channels = embedding_name.split('__')
 
-        if isinstance(embedding, tuple):
-            channel = embedding[1]
-            embedding = embedding[0]
-            idchannel = [i for i, item in enumerate(channels) if channel == item].pop()
-
-            embedding_name = embedding + '_' + channel
+        if embedding_channels:
+            embedding_channels = set(embedding_channels.split('|'))
+            idchannel = [i for i, item in enumerate(channels) if item in embedding_channels].pop()
             __obj_imgs_both = obj_imgs_both[:,:,:,idchannel:idchannel+1]
             
         embedding_value, embedding_aux = compute_cell_embeddings(
             __obj_imgs_both,
             segmentation_masks_both,
-            embedding=embedding,
+            embedding_type=embedding_type,
             embedding_kwargs=embedding_kwargs,
         )
         embeddings[embedding_name] = embedding_value
-        auxiliary_data_prep["embedding"][embedding_name] = embedding_aux
-        
+        aux_embedding[embedding_name] = embedding_aux
+            
+    auxiliary_data_prep['embedding'] = aux_embedding
+
     # Create embedding combinations
-    for embedding_combination_name, embedding_names in embedding_combinations:
+    for embedding_combination_name, embedding_names in embedding_combinations.items():
         embedding_combination = None 
         for embedding_name in embedding_names:
             if embedding_combination is None:
