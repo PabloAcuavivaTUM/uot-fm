@@ -338,7 +338,7 @@ import io
 from typing import Optional
 
 import matplotlib.pyplot as plt
-from cell_fns.cell_metric_fns import (
+from .cell_fns.cell_metric_fns import (
     calculate_same_class_perc,
     estimate_precision,
     estimate_recall,
@@ -362,7 +362,7 @@ class CellMetricComputer:
         shard: jax.sharding.Sharding,
         eval_src_ds: tf.data.Dataset,
         eval_ds_tgt: tf.data.Dataset,
-        auxiliary_prep_data: dict,
+        auxiliary_data_prep: dict,
         sample_fn: Callable,
         vae_decode_fn: Optional[Callable] = None,
         vae_encode_fn: Optional[Callable] = None,
@@ -396,7 +396,7 @@ class CellMetricComputer:
 
         self.is_genot = is_genot
 
-        self.auxiliary_prep_data = auxiliary_prep_data
+        self.auxiliary_data_prep = auxiliary_data_prep
 
         ###
         # Extract embeddings for metric plotting
@@ -437,7 +437,7 @@ class CellMetricComputer:
         samples = None
         inputs = None
         sample_embeddings = {
-            embedding: None for embedding in self.auxiliary_prep_data["embedding"]
+            embedding: None for embedding in self.auxiliary_data_prep["embedding"]
         }
         mses = []
         path_lengths = []
@@ -498,7 +498,7 @@ class CellMetricComputer:
             if self.use_vae:
                 sample_batch = jx_device_put(sample_batch, self.shard)
                 sample_batch = self.vae_decode_fn(sample_batch)
-            sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
+                sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
 
             if pad_size > 0:
                 src_batch["data"] = src_batch.data[:-pad_size]
@@ -507,7 +507,7 @@ class CellMetricComputer:
             ####
             # Compute embeddings
             for embedding in sample_embeddings:
-                embedding_aux = self.auxiliary_prep_data["embedding"][embedding]
+                embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
                 sample_embeddings[embedding] = jnp_safe_concat(
                     sample_embeddings[embedding],
                     embedding_aux.embedding_fn(
@@ -642,7 +642,7 @@ class CellMetricComputer:
 
             ###
             # Plotting
-            embedding_aux = self.auxiliary_prep_data["embedding"][embedding]
+            embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
             embedding_2d_projection = embedding_aux["embedding_2d_projection"]
 
             embedding_2d = embedding_2d_projection(embedding_value)
@@ -687,10 +687,10 @@ class CellMetricComputer:
             plt.tight_layout()
 
             # Making figure savable for weight and biases
-            buf = io.BytesIO()
-            plt.savefig(buf, format="png")
-            buf.seek(0)
-            eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(buf)
+            with io.BytesIO() as buf:
+                plt.savefig(buf, format="png")
+                buf.seek(0)
+                eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(buf)
 
     @staticmethod
     def compute_fid(

@@ -46,22 +46,22 @@ def get_config():
 
     config.data.additional_embedding = {
       "morphological_umap": dict(n_components=16),
-      "channel_umap|00_EU": dict(n_components=16),
-      "channel_umap|20_SP100": dict(n_components=16),
-      "channel_umap|12_RB1_pS807_S811": dict(n_components=16),
+      "channel_umap__00_EU": dict(n_components=16),
+      "channel_umap__20_SP100": dict(n_components=16),
+      "channel_umap__12_RB1_pS807_S811": dict(n_components=16),
       "morphological_features": dict(features_list=morphological_features),
-      "channel_features|00_EU": dict(features_list=intensity_features),
-      "channel_features|20_SP100": dict(features_list=intensity_features),
-      "channel_features|12_RB1_pS807_S811": dict(features_list=intensity_features),
+      "channel_features__00_EU": dict(features_list=intensity_features),
+      "channel_features__20_SP100": dict(features_list=intensity_features),
+      "channel_features__12_RB1_pS807_S811": dict(features_list=intensity_features),
     }
     
     config.data.embedding_combinations = {"embedding": ["morphological_features", 
-                                                        "channel_umap_00_EU", 
-                                                        "channel_umap_20_SP100",
-                                                        "channel_umap_12_RB1_pS807_S811"]
+                                                        "channel_umap__00_EU", 
+                                                        "channel_umap__20_SP100",
+                                                        "channel_umap__12_RB1_pS807_S811"]
                                         } 
     # ! Must have the same dimension as "embedding"
-    config.model.film_cond_dim = 18 + 16 + 16 + 16
+    config.model.film_cond_dim = 19 + 16 + 16 + 16
     
     # Where to compare
     config.training.compare_on = "morphological_features"    
