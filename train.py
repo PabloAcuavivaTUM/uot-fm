@@ -261,18 +261,18 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     #     pickle.dump(params_comb, f)
 
                     # serialized
-
+                    step_name = f"_{step}" if config.training.get('save_all_steps', False) else ""
                     check_folder_tree = (
                         f"{os.getcwd()}/{workdir}/{config.name}/tree_checkpoints"
                     )
                     os.makedirs(check_folder_tree, exist_ok=True)
 
                     eqx.tree_serialise_leaves(
-                        os.path.join(check_folder_tree, f"latest_params.eqx"),
+                        os.path.join(check_folder_tree, f"latest_params{step_name}.eqx"),
                         params_comb,
                     )
                     eqx.tree_serialise_leaves(
-                        os.path.join(check_folder_tree, f"latest_inference_params.eqx"),
+                        os.path.join(check_folder_tree, f"latest_inference_params{step_name}.eqx"),
                         inference_params_comb,
                     )
 
@@ -281,7 +281,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                     }
 
                     with open(
-                        os.path.join(check_folder_tree, "model_info.json"), "w"
+                        os.path.join(check_folder_tree, f"model_info{step_name}.json"), "w"
                     ) as f:
                         json.dump(model_info, f)
                     ###
