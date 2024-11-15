@@ -382,7 +382,7 @@ class CellMetricComputer:
         config: ml_collections.ConfigDict,
         shard: jax.sharding.Sharding,
         eval_src_ds: tf.data.Dataset,
-        eval_ds_tgt: tf.data.Dataset,
+        eval_tgt_ds: tf.data.Dataset,
         auxiliary_data_prep: dict,
         sample_fn: Callable,
         vae_decode_fn: Optional[Callable] = None,
@@ -398,7 +398,7 @@ class CellMetricComputer:
             self.num_save_samples = config.eval.num_save_samples
 
         self.dataset = eval_src_ds
-        self.target_dataset = eval_ds_tgt
+        self.target_dataset = eval_tgt_ds
         self.input_shape = config.model.input_shape
         self.sample_fn = sample_fn
         self.enable_mse = config.eval.enable_mse

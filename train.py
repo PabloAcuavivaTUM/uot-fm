@@ -22,6 +22,7 @@ from utils import (
     BatchResampler,
     EasyDict,
     MetricComputer,
+    CellMetricComputer,
     generate_wb_image,
     get_generation_datasets,
     get_loss_builder,
@@ -104,15 +105,28 @@ def train(config: ml_collections.ConfigDict, workdir: str):
 
     if config.eval.compute_metrics:
         sample_fn = loss_builder.get_sample_fn()
-        metric_computer = MetricComputer(
-            config=config,
-            shard=shard,
-            eval_ds=eval_src_ds,
-            sample_fn=sample_fn,
-            vae_encode_fn=vae_encode_fn,
-            vae_decode_fn=vae_decode_fn,
-            is_genot=config.training.is_genot,
-        )
+        if config.data.source == "campa_cell": # Check we are in cell task (Probably should be different way)
+            metric_computer = CellMetricComputer(
+                config=config,
+                shard=shard,
+                eval_src_ds=eval_src_ds,
+                eval_tgt_ds=eval_tgt_ds,
+                auxiliary_data_prep=auxiliary_data_prep,
+                sample_fn=sample_fn,
+                vae_encode_fn=vae_encode_fn,
+                vae_decode_fn=vae_decode_fn,
+                is_genot=config.training.is_genot,
+            )
+        else:
+            metric_computer = MetricComputer(
+                config=config,
+                shard=shard,
+                eval_ds=eval_src_ds,
+                sample_fn=sample_fn,
+                vae_encode_fn=vae_encode_fn,
+                vae_decode_fn=vae_decode_fn,
+                is_genot=config.training.is_genot,
+            )
         if config.training.save_checkpoints:
             # create checkpoint manager
             mngr_options = obx.CheckpointManagerOptions(
