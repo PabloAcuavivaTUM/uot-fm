@@ -531,8 +531,8 @@ class CellMetricComputer:
             # Compute embeddings
             # Make a tolerance > epsilon? For more numerically stable images?
             sample_segmentation_mask_approx_batch = jnp.expand_dims(
-                ((0.5*sample_batch+0.5) > 0.0).any(axis=-1), 
-                axis=-1
+                ((0.5*sample_batch+0.5) > 0.0).any(axis=1), 
+                axis=1
             ).astype(src_batch.segmentation_mask.dtype)
 
             ###
