@@ -614,7 +614,7 @@ def compute_vae_encoding(
     vae_encode_fn: Callable,
     batch_size: int,
     shard: Optional[jax.sharding.Sharding] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
 
     batch_size = batch_size // 2
     vae_data = []
@@ -709,13 +709,18 @@ def compute_cell_embeddings(
     embedding_kwargs,
     idchannel : Optional[int] = None
 ):
-    embedding_fn = None
-    if idchannel is not None:
-        _obj_imgs = obj_imgs[:,:,:,idchannel:idchannel+1]
-
+    # Most likely unnecesary, but we make sure they stay frozen
     embedding_kwargs = deepcopy(
         embedding_kwargs
-    )  # Most likely unnecesary, but we make sure they stay frozen
+    )  
+
+    def format_input( obj_imgs : np.ndarray, segmentation_masks: np.ndarray):
+        _obj_imgs = obj_imgs.transpose(0,2,3,1)
+        segmentation_masks = segmentation_masks.transpose(0,2,3,1)
+        if idchannel is not None:
+            _obj_imgs = obj_imgs[:,:,:,idchannel:idchannel+1]
+        return _obj_imgs, segmentation_masks
+    _obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)
 
     if embedding_type == "morphological_features":
         embedding_value = calculate_morphological_features(
@@ -785,11 +790,11 @@ def compute_cell_embeddings(
     else: 
         raise ValueError(f'Invalid cell embedding {embedding_type} asked for.')
 
-    if idchannel is not None:
-        channel_aware_embedding_fn = lambda obj_imgs, segmentation_masks: embedding_fn(obj_imgs[:,:,:,idchannel:idchannel+1], segmentation_masks)
-    else:
-        channel_aware_embedding_fn = embedding_fn
-
+    
+    # Corrected embedding function 
+    def _embedding_fn(obj_imgs : np.ndarray, segmentation_masks : np.ndarray):
+        _obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)        
+        return embedding_fn(_obj_imgs, segmentation_masks) 
 
     # Generate embedding 2D projection for eval plotting
     if embedding_value.shape[1] == 2:
@@ -799,9 +804,8 @@ def compute_cell_embeddings(
         _ = umap_2d.fit_transform(embedding_value)
         embedding_2d_projection = lambda emb: umap_2d.transform(emb)
 
-
     return embedding_value, EasyDict(
-        embedding_fn=channel_aware_embedding_fn,
+        embedding_fn=_embedding_fn,
         embedding_2d_projection=embedding_2d_projection,
     )
 
@@ -876,8 +880,10 @@ def campa_cell(
 
     obj_imgs_both = np.concatenate([dataset["src"][0], dataset["tgt"][0]])
     segmentation_masks_both = np.concatenate([dataset["src"][1], dataset["tgt"][1]])
+    segmentation_masks_both = segmentation_masks_both.transpose(0,3,1,2) # [B, C, H, W]
+    obj_imgs_both = obj_imgs_both.transpose(0,3,1,2) # [B, C, H, W]
     # TODO: Any data augmentation: Rotations?
-
+    
 
     embeddings = dict()
     aux_embedding =  dict()
@@ -906,8 +912,7 @@ def campa_cell(
         aux_embedding[embedding_name] = embedding_aux
             
     auxiliary_data_prep['embedding'] = aux_embedding
-
-    # Create embedding combinations
+    
     for embedding_combination_name, embedding_names in embedding_combinations.items():
         embedding_combination = None 
         for embedding_name in embedding_names:
@@ -916,7 +921,6 @@ def campa_cell(
             else:        
                 embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
         embeddings[embedding_combination_name] = embedding_combination
-
 
     if vae_encode_fn is not None:
         preprocessed_obj_imgs_both = [
@@ -934,14 +938,13 @@ def campa_cell(
         src_data = EasyDict(data=obj_imgs_both[:N_src])
         tgt_data = EasyDict(data=obj_imgs_both[N_src:])
 
-    segmentation_masks_both = segmentation_masks_both.transpose(0,3,1,2) # [B, C, H, W]
     src_data["segmentation_mask"] = segmentation_masks_both[:N_src]
     tgt_data["segmentation_mask"] = segmentation_masks_both[N_src:]
 
     for embedding, embedding_value in embeddings.items():
         src_data[embedding] = embedding_value[:N_src]
         tgt_data[embedding] = embedding_value[N_src:]
-
+    
     n_train = int(n_train_perc * N_src)
 
     train_src = EasyDict(**{k: v[:n_train] for k, v in src_data.items()})

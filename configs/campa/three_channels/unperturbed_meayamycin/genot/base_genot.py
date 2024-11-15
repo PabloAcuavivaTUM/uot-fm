@@ -4,7 +4,7 @@ from configs.campa.three_channels.unperturbed_meayamycin.uotfm import get_config
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"genot"
+    config.name = f"three_channel_base_genot"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
