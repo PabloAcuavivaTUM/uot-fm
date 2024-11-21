@@ -334,9 +334,14 @@ class MetricComputer:
 
 
 ####
-# IN PROGRESS: Cell metric computer
+# IN PROGRESS: Cell metric computer (CLEAN UP)
 import io
-from typing import Optional
+import pandas as pd
+import math 
+from typing import Dict 
+import seaborn as sns  
+from typing import Optional, List
+
 
 import matplotlib.pyplot as plt
 from .cell_fns.cell_metric_fns import (
@@ -345,6 +350,18 @@ from .cell_fns.cell_metric_fns import (
     estimate_recall,
 )
 
+
+def np_to_dataframe(array: np.ndarray, columns: Optional[List[str]] = None):
+    if len(array.shape) != 2:
+        raise ValueError(
+            f"Only squared arrays (n,m) can be converted to dataframes! array shape {array.shape}"
+        )
+    columns = columns or []
+    required_columns = array.shape[1]
+    columns += [f"Feature_{i}" for i in range(len(columns), required_columns)]
+
+    return pd.DataFrame(data=array, columns=columns)
+    
 
 def jnp_safe_concat(x: Optional[jax.Array], y: jax.Array):
     if x is None:
@@ -371,13 +388,6 @@ def easy_pad(easy_dict: EasyDict, pad_size: int):
 def easy_unpad(easy_dict : EasyDict, pad_size : int):
     return EasyDict(**{k: v[:-pad_size] for k,v in easy_dict.items()})
 
-###
-# CLEAN UP
-import pandas as pd
-import math 
-from typing import Dict 
-import seaborn as sns  
-
 
 ###
 # Color Constants
@@ -391,47 +401,17 @@ tum_green = (162 / 255, 173 / 255, 0 / 255)
 tum_red = (217 / 255, 81 / 255, 23 / 255)
 tum_gray = (153 / 255, 153 / 255, 153 / 255)
 
+tum_colors = [tum_primary,
+              tum_green,
+              tum_red,
+              tum_secondary,
+              tum_gray,
+              tum_orange,
+              helmholtz_primary,
+              helmholtz_secondary,
+              ]
 
-def comparison_histograms(dfs : Dict[str, pd.DataFrame], colors : Dict[str, pd.DataFrame]):
-    columns = None 
-    for df in dfs.values():
-        if columns is None:
-            columns = set(df.columns)
-        else:
-            columns = columns & set(df.columns)
-    columns = sorted(columns)
-    n_features = len(columns)
-
-    grid_size = math.ceil(math.sqrt(n_features))
-    fig, axes = plt.subplots(grid_size, grid_size, figsize=(5 * grid_size, 5 * grid_size))
-    
-    ###
-    # Plot each feature
-    axes = axes.flatten()
-    for i, feature in enumerate(columns):
-        ax = axes[i]
-        for label, df in dfs.items():
-            sns.histplot(df[feature], color=colors[label], kde=False, stat="density", ax=ax, alpha=0.6, label=label)
-        ax.set_title(f'{feature}', fontsize=16, fontweight='bold')
-        ax.set_ylabel('', fontsize=14)
-        ax.set_xlabel('', fontsize=14)
-        ax.yaxis.grid(True, which='major', linestyle='--', linewidth=0.5, alpha=0.7)
-        ax.xaxis.grid(False)
-
-    # Hide unused
-    for j in range(len(columns), len(axes)):
-        fig.delaxes(axes[j])
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=2, fontsize=14, title="", title_fontsize=14, frameon=False)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    return fig, axes    
-
-
-
-
-
+#### 
 class CellMetricComputer:
     """
     Class to compute metrics for evaluation.
@@ -483,6 +463,7 @@ class CellMetricComputer:
         # Extract embeddings for metric plotting                
         self.additional_embeddings = dict()
         self.cell_embeddings_metrics = config.eval.cell_embeddings_metrics
+        self.cell_embeddings_histograms = config.eval.cell_embeddings_histograms
         additional_embedding = config.data.additional_embedding
 
         for name, dataset in dict(
@@ -533,7 +514,7 @@ class CellMetricComputer:
         # compute metrics batch-wise
         eval_num_iter = self.num_eval_samples // self.batch_size + 1
         loader = iter(self.dataset)
-
+        
         for _ in tqdm(range(eval_num_iter)):
             src_batch = next(loader)
             # padding for last batch if necessary
@@ -552,6 +533,7 @@ class CellMetricComputer:
             else:
                 inputs = jnp_safe_concat(inputs, src_batch.data * 0.5 + 0.5)
 
+            
             ####
             # sample from model
             if self.is_genot:
@@ -649,21 +631,20 @@ class CellMetricComputer:
 
     def compute_cell_metrics(
         self,
-        # obj_imgs: np.ndarray,
-        # segmentation_masks: np.ndarray,
         embeddings: dict[str, np.ndarray],
     ) -> dict:
         ###
         # Compute cell metrics from embeddings
         eval_dict_cell = dict()
-        plot_embeddings = dict()
-        for embedding, embedding_value in embeddings.items():
-            if embedding not in self.cell_embeddings_metrics:
-                continue 
+        umap_embeddings = dict()
+        for embedding in self.cell_embeddings_metrics:
+            ###
+            # Extract embeddings
+            embedding_value = embeddings[embedding]
             source_embedding_value = self.additional_embeddings["dataset"][embedding]
-            target_embedding_value = self.additional_embeddings["target_dataset"][
-                embedding
-            ]
+            target_embedding_value = self.additional_embeddings["target_dataset"][embedding]
+            ###
+
             ###
             # FID
             mu = np.mean(embedding_value, axis=0)
@@ -688,21 +669,9 @@ class CellMetricComputer:
                 mu_gen=mu,
                 sigma_gen=sigma,
             )
-            ###
-            # eval_dict_cell[f"[{embedding}]-SameClassPerc(K1)-target"] = (
-            #     calculate_same_class_perc(
-            #         target_embedding_value,
-            #         embedding_value,
-            #         top_k=1,
-            #     )
-            # )
-            # eval_dict_cell[f"[{embedding}]-SameClassPerc(K3)-target"] = (
-            #     calculate_same_class_perc(
-            #         target_embedding_value,
-            #         embedding_value,
-            #         top_k=3,
-            #     )
-            # )
+
+            ####
+            # Precision, Same class Perc & Recall
             eval_dict_cell[f"[{embedding}]-SameClassPerc(K5)-target"] = (
                 calculate_same_class_perc(
                     target_embedding_value,
@@ -710,14 +679,7 @@ class CellMetricComputer:
                     top_k=5,
                 )
             )
-            # eval_dict_cell[f"[{embedding}]-SameClassPerc(K10)-target"] = (
-            #     calculate_same_class_perc(
-            #         target_embedding_value,
-            #         embedding_value,
-            #         top_k=10,
-            #     )
-            # )
-            ####
+
             eval_dict_cell[f"[{embedding}]-Precission(K5)-target"] = estimate_precision(
                 target_embedding_value,
                 embedding_value,
@@ -726,9 +688,9 @@ class CellMetricComputer:
                 target_embedding_value,
                 embedding_value,
             )
-
+        
             ###
-            # Plotting
+            # Generate 2D points for plotting 
             embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
             embedding_2d_projection = embedding_aux["embedding_2d_projection"]
 
@@ -737,56 +699,81 @@ class CellMetricComputer:
             source_embedding_2d = embedding_2d_projection(source_embedding_value)
             target_embedding_2d = embedding_2d_projection(target_embedding_value)
 
-            plot_embeddings[embedding] = (embedding_2d, source_embedding_2d, target_embedding_2d)
+            umap_embeddings[embedding] = (embedding_2d, source_embedding_2d, target_embedding_2d)
 
-            # plt.figure(figsize=(8, 4), dpi=100)
-            # plt.scatter(
-            #     source_embedding_2d[:, 0],
-            #     source_embedding_2d[:, 1],
-            #     s=15,
-            #     color=tum_primary,
-            #     label="Source",
-            #     alpha=1,
-            # )
-            # plt.scatter(
-            #     target_embedding_2d[:, 0],
-            #     target_embedding_2d[:, 1],
-            #     s=15,
-            #     color=tum_green,
-            #     label="Target",
-            #     alpha=0.3,
-            # )
-            # plt.scatter(
-            #     embedding_2d[:, 0],
-            #     embedding_2d[:, 1],
-            #     s=20,
-            #     color=tum_red,
-            #     label="TargetFromSource",
-            #     marker='x'
-            # )
-            # plt.xticks([])
-            # plt.yticks([])
-            # plt.box(False)
-            # plt.legend(
-            #     title="Type",
-            #     title_fontsize=11,
-            #     fontsize=10,
-            #     loc="upper left",
-            #     bbox_to_anchor=(1, 1),
-            #     frameon=False,
-            # )
-            # plt.tight_layout()
+        eval_dict_cell['umap'] = self.make_umap_figure(umap_embeddings)
 
-            # Making figure savable for weight and biases
-            # with io.BytesIO() as buf:
-            #     plt.savefig(buf, format="png")
-            #     buf.seek(0)
-            #     eval_dict_cell[f"[{embedding}]-Proj"] = wandb.Image(Image.open(buf))
-            #     plt.close()
-        eval_dict_cell['umap'] = self.make_umap_figure(plot_embeddings)
+        for embedding, column_names in self.cell_embeddings_histograms.items():
+            # Extract embeddings
+            embedding_value = embeddings[embedding]
+            source_embedding_value = self.additional_embeddings["dataset"][embedding]
+            target_embedding_value = self.additional_embeddings["target_dataset"][embedding]
+            ###
+            
+            embedding_df = np_to_dataframe(embedding_value, columns=column_names)
+            source_embedding_df = np_to_dataframe(source_embedding_value, columns=column_names)
+            target_embedding_df = np_to_dataframe(target_embedding_value, columns=column_names)
+            
+            hist_figure = self.make_histograms_figure(dfs={"Source": source_embedding_df, 
+                                             "Target": target_embedding_df,
+                                             "Generated": embedding_df,
+                                            },
+                                        colors={"Source": tum_primary, 
+                                             "Target": tum_green,
+                                             "Generated": tum_red,
+                                            })
+            eval_dict_cell[f'hist-{embedding}'] = hist_figure
 
         return eval_dict_cell
-            
+
+
+    @staticmethod
+    def make_histograms_figure(dfs : Dict[str, pd.DataFrame], colors : Optional[Dict[str, pd.DataFrame]] = None):
+        colors = colors or dict()
+        columns = None 
+        for df in dfs.values():
+            if columns is None:
+                columns = set(df.columns)
+            else:
+                columns = columns & set(df.columns)
+        columns = sorted(columns)
+        n_features = len(columns)
+
+        grid_size = math.ceil(math.sqrt(n_features))
+        fig, axes = plt.subplots(grid_size, grid_size, figsize=(5 * grid_size, 5 * grid_size))
+        
+        ###
+        # Plot each feature
+        axes = axes.flatten()
+        for i, feature in enumerate(columns):
+            ax = axes[i]
+            for label, df in dfs.items():
+                sns.histplot(df[feature], color=colors.get(label, tum_colors[i % len(tum_colors)]), 
+                             kde=False, stat="density", ax=ax, alpha=0.6, label=label)
+            ax.set_title(f'{feature}', fontsize=16, fontweight='bold')
+            ax.set_ylabel('', fontsize=14)
+            ax.set_xlabel('', fontsize=14)
+            ax.yaxis.grid(True, which='major', linestyle='--', linewidth=0.5, alpha=0.7)
+            ax.xaxis.grid(False)
+
+        # Hide unused
+        for j in range(len(columns), len(axes)):
+            fig.delaxes(axes[j])
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='upper center', ncol=3, fontsize=14, title="", title_fontsize=14, frameon=False)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        with io.BytesIO() as buf:
+            plt.savefig(buf, format="png")
+            buf.seek(0)
+            figure = wandb.Image(Image.open(buf))
+            plt.close()
+
+        return figure 
+
+
+
     @staticmethod
     def make_umap_figure(plot_embeddings):
         n_embeddings = len(plot_embeddings)

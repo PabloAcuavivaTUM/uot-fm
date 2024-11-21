@@ -9,6 +9,7 @@ def get_config():
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
     config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000]
+    config.training.num_steps = 200 # Just to check everything is running
 
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64
@@ -27,33 +28,33 @@ def get_config():
     ####
     #
     intensity_features = ['mean_intensity',
-  'median_intensity',
-  'std_dev_intensity',
-  'max_intensity',
-  'cv_intensity',
-  'skewness_intensity',
-  'kurtosis_intensity',
-  'energy_intensity',
-  'entropy_intensity',
-  'mad_intensity']
+                          'median_intensity',
+                          'std_dev_intensity',
+                          'max_intensity',
+                          'cv_intensity',
+                          'skewness_intensity',
+                          'kurtosis_intensity',
+                          'energy_intensity',
+                          # 'entropy_intensity',
+                          'mad_intensity',
+                        ]
 
     morphological_features = ['area',
-    'perimeter',
-    'eccentricity',
-    'solidity',
-    'major_axis_length',
-    'minor_axis_length',
-    'orientation',
-    'circularity',
-    'convex_area',
-    'extent',
-    'equivalent_diameter',
-    'bbox',
-    'centroid',
-    'filled_area',
-    'aspect_ratio',
-    ]
-
+                              'perimeter',
+                              'eccentricity',
+                              'solidity',
+                              'major_axis_length',
+                              'minor_axis_length',
+                              'orientation',
+                              'circularity',
+                              'convex_area',
+                              'extent',
+                              'equivalent_diameter',
+                              'bbox',
+                              'centroid',
+                              'filled_area',
+                              'aspect_ratio',
+                            ]
 
 
     config.data.additional_embedding = {
@@ -62,9 +63,9 @@ def get_config():
       "channel_umap__12_RB1_pS807_S811": dict(n_components=16, random_state=42),
       "channel_umap__20_SP100": dict(n_components=16, random_state=42),
 
-      # "channel_features__00_EU": dict(features_list=intensity_features),
-      # "channel_features__20_SP100": dict(features_list=intensity_features),
-      # "channel_features__12_RB1_pS807_S811": dict(features_list=intensity_features),
+      "channel_features__00_EU": dict(features_list=intensity_features),
+      "channel_features__20_SP100": dict(features_list=intensity_features),
+      "channel_features__12_RB1_pS807_S811": dict(features_list=intensity_features),
     }
     
     config.data.embedding_combinations = {"embedding": ["morphological_features", 
@@ -84,6 +85,13 @@ def get_config():
         "channel_umap__20_SP100",
         "channel_umap__12_RB1_pS807_S811",
     ]
+
+    config.eval.cell_embeddings_histograms = {
+        "morphological_features": morphological_features,
+        "channel_features__00_EU": intensity_features,
+        "channel_features__20_SP100": intensity_features,
+        "channel_features__12_RB1_pS807_S811": intensity_features,
+    }
 
     ####
     # Configuration of FiLM layers 

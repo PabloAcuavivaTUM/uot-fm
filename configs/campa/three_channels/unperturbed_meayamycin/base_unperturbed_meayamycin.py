@@ -4,6 +4,7 @@ def get_unperturbed_meayamycin_config(config):
     config.data.type_tgt="184A1_meayamycin"  
 
     config.eval.cell_embeddings_metrics = []
+    config.eval.cell_embeddings_histograms = dict()
     
 
     return config
