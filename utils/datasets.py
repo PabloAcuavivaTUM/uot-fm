@@ -715,12 +715,13 @@ def compute_cell_embeddings(
     )  
 
     def format_input( obj_imgs : np.ndarray, segmentation_masks: np.ndarray):
-        _obj_imgs = obj_imgs.transpose(0,2,3,1)
+        obj_imgs = obj_imgs.transpose(0,2,3,1)
         segmentation_masks = segmentation_masks.transpose(0,2,3,1)
         if idchannel is not None:
-            _obj_imgs = obj_imgs[:,:,:,idchannel:idchannel+1]
-        return _obj_imgs, segmentation_masks
-    _obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)
+            obj_imgs = obj_imgs[:,:,:,idchannel:idchannel+1]
+        return obj_imgs, segmentation_masks
+    
+    obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)
 
     if embedding_type == "morphological_features":
         embedding_value = calculate_morphological_features(
@@ -739,7 +740,7 @@ def compute_cell_embeddings(
         
     elif embedding_type == "channel_features":
         embedding_value = calculate_intensity_features(
-            _obj_imgs, features_list=embedding_kwargs["features_list"]
+            obj_imgs, features_list=embedding_kwargs["features_list"]
         )
         embedding_value = np.array([emb.to_array() for emb in embedding_value])
 
@@ -763,12 +764,12 @@ def compute_cell_embeddings(
     elif embedding_type == "channel_umap":
         umap_model_channels = []
         embedding_values = []
-        n_channels = _obj_imgs.shape[-1]
+        n_channels = obj_imgs.shape[-1]
         for ichannel in range(n_channels):
-            _obj_imgs = _obj_imgs[:, :, :, ichannel]
+            iobj_imgs = obj_imgs[:, :, :, ichannel]
             umap_model = umap.UMAP(**embedding_kwargs)
             _embedding_value = umap_model.fit_transform(
-                _obj_imgs.reshape(_obj_imgs.shape[0], -1)
+                iobj_imgs.reshape(iobj_imgs.shape[0], -1)
             )
 
             embedding_values.append(_embedding_value)
@@ -780,12 +781,12 @@ def compute_cell_embeddings(
             embedding_values = []
             for ichannel in range(n_channels):
                 umap_model = umap_model_channels[ichannel]
-                _obj_imgs = obj_imgs[:, :, :, ichannel]
-                _embedding_value = umap_model.transform(
-                    _obj_imgs.reshape(_obj_imgs.shape[0], -1)
+                iobj_imgs = obj_imgs[:, :, :, ichannel]
+                embedding_value = umap_model.transform(
+                    iobj_imgs.reshape(iobj_imgs.shape[0], -1)
                 )
 
-                embedding_values.append(_embedding_value)
+                embedding_values.append(embedding_value)
             return np.concatenate(embedding_values, axis=1)
     else: 
         raise ValueError(f'Invalid cell embedding {embedding_type} asked for.')
@@ -793,8 +794,8 @@ def compute_cell_embeddings(
     
     # Corrected embedding function 
     def _embedding_fn(obj_imgs : np.ndarray, segmentation_masks : np.ndarray):
-        _obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)        
-        return embedding_fn(_obj_imgs, segmentation_masks) 
+        obj_imgs, segmentation_masks = format_input(obj_imgs, segmentation_masks)        
+        return embedding_fn(obj_imgs, segmentation_masks) 
 
     # Generate embedding 2D projection for eval plotting
     if embedding_value.shape[1] == 2:
@@ -820,7 +821,8 @@ def campa_cell(
     channels: Optional[str] = None,
     additional_embedding: Optional[Dict[str, Dict[str, Any]]] = None,
     embedding_combinations : Optional[Dict[str,list[str]]] = None,
-    n_train_perc : float = 0.75,
+    n_src_perc : float = 0.75,
+    n_tgt_perc : float = 0.66, 
 ) -> Tuple[
     EasyDict,
     EasyDict,
@@ -847,8 +849,6 @@ def campa_cell(
                 else:
                     obj_imgs = np.concatenate((obj_imgs, objs_channel), axis=-1) 
             obj_imgs_wells.append(obj_imgs)
-
-
             segmentation_masks = np.load(os.path.join(well_path, f"segmentation_masks.npy"))
             segmentation_masks_wells.append(segmentation_masks)
         obj_imgs_wells = np.concatenate(obj_imgs_wells)
@@ -877,6 +877,7 @@ def campa_cell(
         auxiliary_data_prep[i] = dict(max=obj_imgs_wells_max)
 
     N_src = len(dataset["src"][0])
+    N_tgt = len(dataset["tgt"][0])
 
     obj_imgs_both = np.concatenate([dataset["src"][0], dataset["tgt"][0]])
     segmentation_masks_both = np.concatenate([dataset["src"][1], dataset["tgt"][1]])
@@ -945,12 +946,14 @@ def campa_cell(
         src_data[embedding] = embedding_value[:N_src]
         tgt_data[embedding] = embedding_value[N_src:]
     
-    n_train = int(n_train_perc * N_src)
+    n_src_train = int(n_src_perc * N_src)
 
-    train_src = EasyDict(**{k: v[:n_train] for k, v in src_data.items()})
-    eval_src = EasyDict(**{k: v[n_train:] for k, v in src_data.items()})
+    train_src = EasyDict(**{k: v[:n_src_train] for k, v in src_data.items()})
+    eval_src = EasyDict(**{k: v[n_src_train:] for k, v in src_data.items()})
 
     # Eval target is not used, therefore to get a bit more target data, we just copy the train tgt dataset for it
-    train_tgt = eval_tgt = tgt_data
+    n_tgt_train = int(n_tgt_perc * N_tgt)
+    train_tgt = EasyDict(**{k: v[:n_tgt_train] for k, v in tgt_data.items()})
+    eval_tgt = EasyDict(**{k: v[n_tgt_train:] for k, v in tgt_data.items()})
 
     return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep
