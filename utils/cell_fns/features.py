@@ -317,8 +317,30 @@ def calculate_single_cell_morphological_features(segmentation_mask: np.ndarray):
                 #"hu_moments": hu_moments,
             }
         )
+    else: # Prevent errors
+        img_morphological_features = FeaturesDict(
+            **{
+                "area": 0.0,
+                "perimeter": 0.0,
+                "eccentricity": 0.0,
+                "solidity": 0.0,
+                "major_axis_length": 0.0,
+                "minor_axis_length": 0.0,
+                "orientation": 0.0,
+                "circularity": 0.0,
+                "convex_area": 0.0,
+                "extent": 0.0,
+                "equivalent_diameter": 0.0,
+                "bbox": [0.0,0.0,0.0,0.0],
+                "centroid": [0.0,0.0],
+                "filled_area": 0.0,
+                "aspect_ratio": 0.0,
+                #"central_moments": moments,
+                #"hu_moments": hu_moments,
+            }
+        )
 
-        return img_morphological_features
+    return img_morphological_features
 
 
 def calculate_morphological_features(
