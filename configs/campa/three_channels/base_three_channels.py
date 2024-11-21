@@ -1,7 +1,7 @@
 def get_three_channels_config(config):
     # training
-    config.training.num_steps = 150_000
-    config.training.eval_freq = 10_000
+    config.training.num_steps = 300_000
+    config.training.eval_freq = 25_000
     config.training.print_freq = 500
     config.training.cost = "sqeuclidean"
     
