@@ -24,6 +24,46 @@ from utils import MetricComputer, get_loss_builder, get_translation_datasets
 import matplotlib.pyplot as plt
 
 Ws = [-1, 0, 0.1, 0.5, 1, 2, 3, 5, 6.5, 10]
+Ws = {w:w for w in Ws}
+
+def get_exp_w(y0 : float, y1 : float, k : float):
+    def w(t):
+        return (y0 - y1) * jnp.exp(-k * t) + y1
+    return w 
+def get_linear_w(y1: float, W : float):
+    # W = Area, y1: Value at y1
+    b = 2*W - y1
+    a = 2*(y1-W)
+    def w(t):
+        return a*t + b
+    return w
+Ws = {
+ "4_2": get_linear_w(4, 2), # Out of curiosity, we would expect this to go worse
+ "5_2": get_linear_w(5, 2),
+ "5_1p5": get_linear_w(5, 1.5),
+ "3_2": get_linear_w(3, 2),
+ "2_4": get_linear_w(2, 4),
+ "05_4": get_linear_w(0.5, 2),
+ "0_2": get_linear_w(0, 2),
+#  "3_1": get_linear_w(3, 1),
+#  "1_2.5": get_linear_w(1, 2.5),
+#  "1_4.5": get_linear_w(1, 4.5),
+#  "1_2": get_linear_w(1, 2),
+#  "0_2": get_linear_w(0, 2),
+#  "0_1": get_linear_w(0, 1),
+#  "0_1": get_linear_w(0, 1.5),
+#  "0_3": get_linear_w(0, 3),
+#  "0.5_2": get_linear_w(0.5, 2),
+}
+
+# Ws = {
+#     "EXP-A(2.0)_y0(10)_y1(0)": get_exp_w(y0=10, y1=0, k=4.965114231744277),  # Area 2.0
+#     "EXP-A(2.5)_y0(10)_y1(2)": get_exp_w(y0=10, y1=2, k=15.999998199433959),  # Area 2.5
+#     "EXP-A(2.25)_y0(4)_y1(2)": get_exp_w(y0=4, y1=2, k=7.997309067593506),  # Area 2.25
+#     "EXP-A(2.0)_y0(5)_y1(0.5)": get_exp_w(y0=5, y1=0.5, k=2.8214393721220796),  # Area 2.0
+#     "EXP-A(1.0)_y0(5)_y1(0.5)": get_exp_w(y0=5, y1=0.5, k=8.99888807607545),  # Area 1
+# }
+
 n_images_per_row = len(Ws)+1
 NSAMPLES = None
 batch_size = 256
@@ -149,11 +189,10 @@ class FlowSolverClassifierFree:
         self,
         t1: float,
         dt0: float,
-        w : float, 
+        w : Union[float, Callable], 
         t0: float = 0.0,
         gamma: str = "constant",
         flow_sigma: Optional[float] = 0.1,
-        weight: Optional[Callable[[float], float]] = lambda t: 1.0,
         solver: str = "tsit5",
         is_genot : bool = False 
         
@@ -161,10 +200,12 @@ class FlowSolverClassifierFree:
         self.t1 = t1
         self.t0 = t0
         self.dt0 = dt0
-        self.w = w
+        if isinstance(w, float):
+            self.w = lambda t: w
+        else:
+            self.w = w
         self.gamma = gamma
         self.sigma = flow_sigma
-        self.weight = weight
         self.solver = solver
         self.is_genot = is_genot
 
@@ -188,7 +229,7 @@ class FlowSolverClassifierFree:
                             cross_attn_cond=None, 
                         )
                 
-                return (1+self.w)*u0 - self.w*v0
+                return (1+self.w(t))*u0 - self.w(t)*v0
             
             # --- 
             term = dfx.ODETerm(func)
@@ -267,20 +308,19 @@ def generate_image(samples : jax.Array, inputs : Optional[jax.Array] = None, num
 
 # Compute metrics for complete 
 eval_key = jr.PRNGKey(42)
-# Notice -1 is just a cheaty way to generate from the unconditional model
-Ws = [-1, 0, 0.1, 0.5, 1, 2, 3, 5, 6.5, 10]
-n_images_per_row = len(Ws)+1    
+# # Notice -1 is just a cheaty way to generate from the unconditional model
+# Ws = [-1, 0, 0.1, 0.5, 1, 2, 3, 5, 6.5, 10]
+# n_images_per_row = len(Ws)+1    
 eval_key, eval_key_sample = jr.split(eval_key)
 
 metrics_all = dict()
-for w in Ws:
+for w_name, w in Ws.items():
     fs = FlowSolverClassifierFree(
             t1=config.t1,
             dt0=config.dt0,
             w=w,
             flow_sigma=config.training.flow_sigma,
             gamma=config.training.gamma,
-            weight=lambda t: 1.0,
             solver=config.solver,
             is_genot=config.training.is_genot
         )
@@ -302,7 +342,7 @@ for w in Ws:
                         inference_model, metrics_key
                     )
     print(_metric)
-    metrics_all[w] = _metric
+    metrics_all[w_name] = _metric
 
 extract_metrics = [
     'fid',
@@ -318,8 +358,22 @@ print(metrics_of_interest)
 import json
 import os 
 
+target_experiment = 'classifier_free_w_linear2'
+
 path_dir = os.path.join('classifier_free', 'experiments', 'fid_and_metrics')
 os.makedirs(path_dir, exist_ok=True)
-with open(os.path.join(path_dir, 'classifier_free_w.json'), 'w') as f:
+with open(os.path.join(path_dir, f'{target_experiment}.json'), 'w') as f:
     json.dump(metrics_of_interest, f)
 
+
+import os
+import matplotlib.pyplot as plt
+
+image_folder = os.makedirs(os.path.join('classifier_free', 'experiments', 'images', target_experiment), exist_ok=True)
+images = {k: v['samples'].image for k, v in metrics_all.items()}
+for k, image in images.items():
+    file_path = os.path.join(image_folder, f"{k}.png")
+    plt.imshow(image)
+    plt.axis('off')
+    plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
+    plt.close()
