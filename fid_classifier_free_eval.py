@@ -122,7 +122,7 @@ shard = sharding.PositionalSharding(devices)
 if config.model.use_vae:
     logging.info("Loading VAE...")
     # load vae and jitted encode/decode functions
-    vae_encode_fn, vae_decode_fn = get_vae_fns(shard)
+    vae_encode_fn, vae_decode_fn = get_vae_fns(shard, config.model.use_vae)
 
 
 # build model and optimization functions

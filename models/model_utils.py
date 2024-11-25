@@ -1,4 +1,4 @@
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Union
 from numpy.typing import ArrayLike
 
 import jax
@@ -128,7 +128,12 @@ def get_model(
 #         raise ValueError(f"Unknown model type {config.model.type}")
 
 
-def get_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
+def get_vae_fns(shard: jax.sharding.Sharding, vae_fns : Union[str, bool] ) -> Tuple[Callable, Callable]:
+    if isinstance(vae_fns, bool): # Base legacy case
+        return get_base_vae_fns(shard)
+
+
+def get_base_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
     fx_path = "CompVis/stable-diffusion-v1-4"
     vae, vae_params = FlaxAutoencoderKL.from_pretrained(
         fx_path, subfolder="vae", revision="flax", dtype=jnp.float32
