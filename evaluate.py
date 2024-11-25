@@ -31,7 +31,7 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
     if config.model.use_vae:
         logging.info("Loading VAE...")
         # load vae and jitted encode/decode functions
-        vae_encode_fn, vae_decode_fn = get_vae_fns(shard, config.model.use_vae)
+        vae_encode_fn, vae_decode_fn = get_vae_fns(shard, config.model.get("vae_fns", "legacy"))
 
     if config.task == "translation":
         _, _, eval_src_ds, eval_tgt_ds = get_translation_datasets(

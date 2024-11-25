@@ -15,6 +15,7 @@ def get_unet_config(config):
     model.dropout = 0.1
     model.biggan_sample = False
     model.use_vae = True
+    model.vae_fns = None
     model.input_shape = [4, 32, 32]
 
     # conditioning
