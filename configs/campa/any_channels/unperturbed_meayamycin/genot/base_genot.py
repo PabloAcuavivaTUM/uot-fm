@@ -1,5 +1,5 @@
 from configs.campa.any_channels.unperturbed_meayamycin.uotfm import get_config as base_uotfm_cfg
-
+from itertools import chain
 
 def extend_features(features, extension_dict):
     # We need it to properly deal with named features which generate multiple features
@@ -24,7 +24,6 @@ def get_config():
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64
     config.training.batch_size_matching = 256
-
 
 
     config.eval.checkpoint_metric = '[channel_umap__00_EU]-FID-target'
@@ -61,44 +60,49 @@ def get_config():
                             ]
     morphological_features_extension = {'bbox': 4, 'centroid': 2}
 
-    
+    channels0 = ["00_EU", "20_SP100", "12_RB1_pS807_S811"]
+    channels1 = ["07_H2B","15_U2SNRNPB", "20_ALYREF"]
+    grouped_channels = [channels0, channels1]
+    channels = list(chain.from_iterable(grouped_channels))
 
 
     config.data.additional_embedding = {
       "morphological_features": dict(features_list=morphological_features, random_state=42),
-      "channel_umap__00_EU": dict(n_components=16, random_state=42),
-      "channel_umap__12_RB1_pS807_S811": dict(n_components=16, random_state=42),
-      "channel_umap__20_SP100": dict(n_components=16, random_state=42),
-
-      "channel_features__00_EU": dict(features_list=intensity_features),
-      "channel_features__20_SP100": dict(features_list=intensity_features),
-      "channel_features__12_RB1_pS807_S811": dict(features_list=intensity_features),
     }
+    for channel in channels:
+        config.data.additional_embedding[f"channel_umap__{channel}"] = dict(n_components=16, random_state=42)
+        config.data.additional_embedding[f"channel_features__{channel}"] = dict(features_list=intensity_features)
+
+
     
-    config.data.embedding_combinations = {"embedding": ["morphological_features", 
-                                                        "channel_umap__00_EU", 
-                                                        "channel_umap__20_SP100",
-                                                        "channel_umap__12_RB1_pS807_S811"]
+    config.data.embedding_combinations = {"embedding": ["morphological_features"]
+                                         + [f"channel_umap__{channel}" for channel in channels]
                                         } 
     # ! Must have the same dimension as "embedding"
-    config.model.film_cond_dim = 19 + 16 + 16 + 16
+    config.model.film_cond_dim = 19 + 16 * len(channels)
+
     
     # Where to compare
     config.training.compare_on = "morphological_features"    
     
     config.eval.cell_embeddings_metrics = [
         "morphological_features", 
-        "channel_umap__00_EU", 
-        "channel_umap__20_SP100",
-        "channel_umap__12_RB1_pS807_S811",
-    ]
+    ] + [f"channel_umap__{channel}" for channel in channels]
 
     config.eval.cell_embeddings_histograms = {
         "morphological_features": extend_features(morphological_features, morphological_features_extension),
-        "channel_features__00_EU": intensity_features,
-        "channel_features__20_SP100": intensity_features,
-        "channel_features__12_RB1_pS807_S811": intensity_features,
     }
+    for channel in channels:
+        config.eval.cell_embeddings_histograms[f"channel_umap__{channel}"] = intensity_features
+
+
+    #### 
+    config.model.vae_fns = "naive_concat"
+    config.model.input_shape = [4*len(grouped_channels), 32, 32]
+    config.data.channels = channels
+    config.eval.image_channels = [grouped_channels]
+    config.data.shape = [3*len(grouped_channels), 256, 256]
+
 
     ####
     # Configuration of FiLM layers 

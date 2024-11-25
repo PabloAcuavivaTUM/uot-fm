@@ -129,9 +129,31 @@ def get_model(
 
 
 def get_vae_fns(shard: jax.sharding.Sharding, vae_fns : Union[str, bool] ) -> Tuple[Callable, Callable]:
-    if isinstance(vae_fns, bool): # Base legacy case
+    if vae_fns == "legacy": # Base legacy case
         return get_base_vae_fns(shard)
+    elif vae_fns == "naive_concat":
+        return get_naive_concat_vae_fns(shard)
+    raise ValueError(f"Invalid vae_fns asked for {vae_fns}")
 
+def get_naive_concat_vae_fns(shard: jax.sharding.Sharding):
+    base_encode_fn, base_decode_fn = get_base_vae_fns(shard)
+
+    def encode_fn(image_batch: jax.Array) -> jax.Array:
+        group_size = 3
+        n_groups = image_batch.shape[1] // group_size
+        latent_batch = []
+        for i in range(n_groups):
+            latent_batch += [base_encode_fn(image_batch[:,i*group_size:(i+1)*group_size])]
+        return jnp.concatenate(latent_batch, axis=1)
+    
+    def decode_fn(latent_batch: jax.Array) -> jax.Array:
+        group_size = 4
+        n_groups = latent_batch.shape[1] // group_size
+        image_batch = []
+        for i in range(n_groups):
+            image_batch += [base_decode_fn(latent_batch[:,i*group_size:(i+1)*group_size])]
+        return jnp.concatenate(image_batch, axis=1)    
+    return encode_fn, decode_fn
 
 def get_base_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
     fx_path = "CompVis/stable-diffusion-v1-4"

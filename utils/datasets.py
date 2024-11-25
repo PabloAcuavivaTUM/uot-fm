@@ -959,12 +959,11 @@ def campa_cell(
     eval_tgt = EasyDict(**{k: v[n_tgt_train:] for k, v in tgt_data.items()})
 
     ###
-    # DEBUGGING: To make sure the moodel is not learn to "memorize" train_tgt
-    traing_tgt_copy = {k: deepcopy(v) for k,v in train_tgt.items()}
-    traing_tgt_copy['no_vae_data'] = obj_imgs_both[N_src:][:n_tgt_train]
-    auxiliary_data_prep['train_tgt'] = EasyDict(traing_tgt_copy)
-    # Obtain input_data directly without decoding, as we have access to it here
-    print(auxiliary_data_prep['train_tgt']['no_vae_data'].shape)
-    ###
+    # DEBUGGING: To make sure the moodel is not learn to "memorize" train_tgt. For this also need activate in metrics.py
+    # And adapt to multichannel
+    ##########
+    # traing_tgt_copy = {k: deepcopy(v) for k,v in train_tgt.items()}
+    # traing_tgt_copy['no_vae_data'] = obj_imgs_both[N_src:][:n_tgt_train]
+    # auxiliary_data_prep['train_tgt'] = EasyDict(traing_tgt_copy)
     
     return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep

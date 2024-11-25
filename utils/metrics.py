@@ -457,6 +457,13 @@ class CellMetricComputer:
 
         self.is_genot = is_genot
 
+        # For plotting images
+        self.data_channels = config.data.channels
+        self.image_channels = config.eval.image_channels 
+        self.image_ichannels = []
+        for channel_group in self.image_channels:
+            self.image_ichannels += [[self.data_channels.index(channel) for channel in channel_group]]
+
         self.auxiliary_data_prep = auxiliary_data_prep
 
         ###
@@ -618,27 +625,31 @@ class CellMetricComputer:
         ###
         # Sample images
         if self.return_samples:
+            ###
+            # Single sample 
             # Adapt from [-1,1] to[0,1]  
             samples =  samples*0.5 + 0.5
             inputs = inputs*0.5+ 0.5
-            
-            
-            wb_image = generate_wb_image(
-                samples=samples, inputs=inputs, num_samples=self.num_save_samples
-            )
-            eval_dict["samples"] = wb_image
+            for image_channels, image_idchannels in zip(self.image_channels, self.image_ichannels):
+                image_channels_name = '-'.join(image_channels)
+                samples_images = samples[image_idchannels]
+                input_images = inputs[image_idchannels]
 
-            # We also use the approximated one instead of the real one, should be almost identical (takes into account VAE)
-            # inputs_segmentation_mask_approx =  jnp.expand_dims(
-            #     (inputs > 0.01).any(axis=1), 
-            #     axis=1
-            # ).astype(src_batch.segmentation_mask.dtype)
+                wb_image = generate_wb_image(
+                    samples=samples_images, inputs=input_images, num_samples=self.num_save_samples
+                )
+                eval_dict[f"samples_{image_channels_name}"] = wb_image
 
+                # We also use the approximated one instead of the real one, should be almost identical (takes into account VAE)
+                # inputs_segmentation_mask_approx =  jnp.expand_dims(
+                #     (inputs > 0.01).any(axis=1), 
+                #     axis=1
+                # ).astype(src_batch.segmentation_mask.dtype)
             wb_image = generate_wb_image(
                 samples=sample_segmentation_mask_approx, inputs=inputs_segmentation_mask, num_samples=self.num_save_samples
             )
             eval_dict["segmentation_mask_samples"] = wb_image
-
+            
             ####
             # Generate multisample
             loader = iter(self.dataset)
@@ -651,33 +662,40 @@ class CellMetricComputer:
                 _input, sample_batch, sample_segmentation_mask_approx_batch, _, _ = self.sample_cell(src_batch, partial_sample_fn, sample_key)
                 samples.append(sample_batch*0.5 + 0.5)
                 samples_masks_approx.append(sample_segmentation_mask_approx_batch)
-            eval_dict["multisamples"] = generate_multisample_wb_image(samples=samples, inputs=_input*0.5 + 0.5)
+            
+            for image_channels, image_idchannels in zip(self.image_channels, self.image_ichannels):
+                image_channels_name = '-'.join(image_channels)
+                samples_images_list = [sample[image_idchannels] for sample in samples]
+                input_images = (_input*0.5 + 0.5)[image_idchannels]
+                eval_dict[f"multisamples_{image_channels_name}"] = generate_multisample_wb_image(samples=samples_images_list, inputs=input_images)
+            
+
             eval_dict["segmentation_mask_multisamples"] = generate_multisample_wb_image(samples=samples_masks_approx, inputs=src_batch.segmentation_mask)
 
             #######
             # DEBUGGING / CHECK WORKING:
             # Get closest real images so that one can check if the model is simply copying real cells
-            dist_fn = lambda x, y: jnp.sum(x-y)**2
+            # dist_fn = lambda x, y: jnp.sum(x-y)**2
             
-            tgt_data = self.auxiliary_data_prep['train_tgt']['no_vae_data']
-            tgt_compare_on = self.auxiliary_data_prep['train_tgt'][self.compare_on]
-            input_compare_on = src_batch[self.compare_on]
+            # tgt_data = self.auxiliary_data_prep['train_tgt']['no_vae_data']
+            # tgt_compare_on = self.auxiliary_data_prep['train_tgt'][self.compare_on]
+            # input_compare_on = src_batch[self.compare_on]
 
-            dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_compare_on))(input_compare_on)
-            elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
-            elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
+            # dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_compare_on))(input_compare_on)
+            # elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
+            # elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
 
-            eval_dict["multisamples_closest_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
-                                                                                  _input*0.5 + 0.5,
-                                                                                  )
+            # eval_dict["multisamples_closest_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
+            #                                                                     _input*0.5 + 0.5,
+            #                                                                     )
 
 
-            dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_data))(sample_batch)
-            elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
-            elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
-            eval_dict["multisamples_closest_from_sample_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
-                                                                                  sample_batch*0.5 + 0.5,
-                                                                                  )
+            # dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_data))(sample_batch)
+            # elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
+            # elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
+            # eval_dict["multisamples_closest_from_sample_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
+            #                                                                                             sample_batch*0.5 + 0.5,
+            #                                                                     )
 
 
 
