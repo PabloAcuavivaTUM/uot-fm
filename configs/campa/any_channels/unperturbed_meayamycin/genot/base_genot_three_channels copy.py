@@ -1,5 +1,15 @@
-from configs.campa.three_channels.unperturbed_meayamycin.uotfm import get_config as base_uotfm_cfg
+from configs.campa.any_channels.unperturbed_meayamycin.uotfm import get_config as base_uotfm_cfg
 
+
+def extend_features(features, extension_dict):
+    # We need it to properly deal with named features which generate multiple features
+    updated_features = []
+    for feature in features:
+        if feature in extension_dict:
+            updated_features.extend([f"{feature}_{i}" for i in range(extension_dict[feature])])
+        else:
+            updated_features.append(feature)
+    return updated_features
 
 def get_config():
     config = base_uotfm_cfg()
@@ -9,7 +19,7 @@ def get_config():
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
     config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000]
-    config.training.num_steps = 200 # Just to check everything is running
+    # config.training.num_steps = 200 # Just to check everything is running
 
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64
@@ -18,12 +28,6 @@ def get_config():
 
 
     config.eval.checkpoint_metric = '[channel_umap__00_EU]-FID-target'
-
-    # TEMPORAL: See what is happening
-    # config.eval.num_save_samples = 4
-
-    # config.model.cross_attn_resolutions = [i for i in range(512)]
-    # config.model.cross_attn_dim = config.model.input_shape[0]
 
     ####
     #
@@ -55,6 +59,9 @@ def get_config():
                               'filled_area',
                               'aspect_ratio',
                             ]
+    morphological_features_extension = {'bbox': 4, 'centroid': 2}
+
+    
 
 
     config.data.additional_embedding = {
@@ -87,7 +94,7 @@ def get_config():
     ]
 
     config.eval.cell_embeddings_histograms = {
-        "morphological_features": morphological_features,
+        "morphological_features": extend_features(morphological_features, morphological_features_extension),
         "channel_features__00_EU": intensity_features,
         "channel_features__20_SP100": intensity_features,
         "channel_features__12_RB1_pS807_S811": intensity_features,

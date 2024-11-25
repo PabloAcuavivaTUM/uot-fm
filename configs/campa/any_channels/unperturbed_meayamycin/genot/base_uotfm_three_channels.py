@@ -1,4 +1,4 @@
-from configs.campa.three_channels.unperturbed_meayamycin.uotfm import get_config as base_uotfm_cfg
+from configs.campa.any_channels.unperturbed_meayamycin.uotfm import get_config as base_uotfm_cfg
 
 
 def get_config():

@@ -1,4 +1,4 @@
-def get_three_channels_config(config):
+def get_any_channels_config(config):
     # training
     config.training.num_steps = 300_000
     config.training.eval_freq = 25_000
@@ -6,7 +6,9 @@ def get_three_channels_config(config):
     config.training.cost = "sqeuclidean"
     
     # data
+    ### Initially set up for 3 channels
     config.data.channels = ["00_EU", "20_SP100", "12_RB1_pS807_S811"]
+    config.eval.image_channels = [["00_EU", "20_SP100", "12_RB1_pS807_S811"]]
     config.data.shape = [3, 256, 256]
 
     return config
