@@ -19,6 +19,8 @@ from utils import GenerationSampler
 from .miscellaneous import EasyDict
 from .transforms import low_pass_filter 
 
+from copy import deepcopy
+
 # TODO: Once verified the code is properly working, change "map_forward" so that is works for all datasets in translation, simply switch
 #  the source and the target dataset after getting the data if need be and remove all references thereafter
 # TODO: Overfit to one batch can be mostly substituted in many places for nsamples (Leave it as it changes some preprocessing, but the function
@@ -956,4 +958,13 @@ def campa_cell(
     train_tgt = EasyDict(**{k: v[:n_tgt_train] for k, v in tgt_data.items()})
     eval_tgt = EasyDict(**{k: v[n_tgt_train:] for k, v in tgt_data.items()})
 
+    ###
+    # DEBUGGING: To make sure the moodel is not learn to "memorize" train_tgt
+    traing_tgt_copy = {k: deepcopy(v) for k,v in train_tgt.items()}
+    traing_tgt_copy['no_vae_data'] = obj_imgs_both[N_src:][:n_tgt_train]
+    auxiliary_data_prep['train_tgt'] = EasyDict(traing_tgt_copy)
+    # Obtain input_data directly without decoding, as we have access to it here
+    print(auxiliary_data_prep['train_tgt']['no_vae_data'].shape)
+    ###
+    
     return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep

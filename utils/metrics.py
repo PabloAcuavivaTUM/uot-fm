@@ -18,7 +18,7 @@ from PIL import Image
 
 from models import inception
 
-from .miscellaneous import EasyDict, generate_wb_image, jx_device_put
+from .miscellaneous import EasyDict, generate_wb_image, generate_multisample_wb_image, jx_device_put
 
 
 class MetricComputer:
@@ -163,7 +163,7 @@ class MetricComputer:
             # sample from model
             if self.is_genot:
                 batch_size = src_batch.data.shape[0]
-                ode_key = jr.split(key, batch_size)
+                key, *ode_key = jr.split(key, batch_size+1)
             else:
                 ode_key = None
 
@@ -484,6 +484,66 @@ class CellMetricComputer:
 
             self.additional_embeddings[name] = additional_embedding
 
+        ##
+        # DEBUGGING: Checking compare on to see real cells which are closest to generated
+        self.compare_on = config.training.compare_on
+
+    def sample_cell(self, src_batch : EasyDict, partial_sample_fn : Callable, key : jr.KeyArray):
+        # Padding for last batch if necessary
+        pad_size = self.batch_size - src_batch.data.shape[0]
+        if pad_size > 0:
+            src_batch = easy_pad(src_batch, pad_size)
+        src_batch = jx_device_put(src_batch, self.shard)
+
+        if self.use_vae:
+            _input = self.vae_decode_fn(src_batch.data)
+        else:
+            _input = src_batch.data
+
+        ####
+        # sample from model
+        if self.is_genot:
+            batch_size = src_batch.data.shape[0]
+            ode_key = jr.split(key, batch_size)
+        else:
+            ode_key = None
+
+        ###
+        # NFE
+        sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch, ode_key)
+
+        ###
+        # T - Euclidean distance
+        path_length = None
+        if self.enable_path_lengths:
+            # Compute Euclidean distance between samples and inputs
+            if pad_size > 0:
+                path_length =self.rmse_fn(
+                            src_batch.data[:-pad_size], sample_batch[:-pad_size]
+                        )
+            else:
+                path_length = self.rmse_fn(src_batch.data, sample_batch)
+        ###
+        # Decode VAE
+        if self.use_vae:
+            sample_batch = jx_device_put(sample_batch, self.shard)
+            sample_batch = self.vae_decode_fn(sample_batch)
+            sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
+
+        if pad_size > 0:
+            src_batch = easy_unpad(src_batch, pad_size)
+            sample_batch = sample_batch[:-pad_size]
+
+        ####
+        # Compute embeddings
+        # Make a tolerance > 0.05 as it is more numerically stable to noises 
+        sample_segmentation_mask_approx_batch = jnp.expand_dims(
+            ((0.5*sample_batch+0.5) > 0.01).any(axis=1), # Compare in [0,1 domain]
+            axis=1
+        ).astype(src_batch.segmentation_mask.dtype)
+
+        return _input, sample_batch, sample_segmentation_mask_approx_batch, nfe, path_length
+
     def compute_metrics(self, model: eqx.Module, key: jr.KeyArray):
         """
         Compute metrics for evaluation on cell data.
@@ -500,7 +560,7 @@ class CellMetricComputer:
         samples = None
         sample_segmentation_mask_approx = None
         inputs = None
-        inputs_segmentation_mask = None
+        inputs_segmentation_mask = None 
         sample_embeddings = {
             embedding: None for embedding in self.auxiliary_data_prep["embedding"]
         }
@@ -508,90 +568,37 @@ class CellMetricComputer:
         path_lengths = []
         nfes = []
 
-        # create vmap functions
-        partial_sample_fn = ft.partial(self.sample_fn, model)
-
-        # compute metrics batch-wise
+        # Compute metrics batch-wise
         eval_num_iter = self.num_eval_samples // self.batch_size + 1
         loader = iter(self.dataset)
-        
+
+        # Create vmap functions
+        partial_sample_fn = ft.partial(self.sample_fn, model)
         for _ in tqdm(range(eval_num_iter)):
             src_batch = next(loader)
-            # padding for last batch if necessary
-            pad_size = self.batch_size - src_batch.data.shape[0]
-
-            inputs_segmentation_mask = jnp_safe_concat(inputs_segmentation_mask, src_batch.segmentation_mask)
-            if pad_size > 0:
-                src_batch = easy_pad(src_batch, pad_size)
-
-            src_batch = jx_device_put(src_batch, self.shard)
-
-            if self.use_vae:
-                inputs = jnp_safe_concat(
-                    inputs, self.vae_decode_fn(src_batch.data) * 0.5 + 0.5
-                )
-            else:
-                inputs = jnp_safe_concat(inputs, src_batch.data * 0.5 + 0.5)
-
+            key, sample_key = jr.split(key)
+            _input, sample_batch, sample_segmentation_mask_approx_batch, nfe, path_length = self.sample_cell(src_batch, partial_sample_fn, sample_key)
             
-            ####
-            # sample from model
-            if self.is_genot:
-                batch_size = src_batch.data.shape[0]
-                ode_key = jr.split(key, batch_size)
-            else:
-                ode_key = None
+            # Accumulate samples
+            inputs = jnp_safe_concat(inputs, _input)
+            inputs_segmentation_mask = jnp_safe_concat(inputs_segmentation_mask, src_batch.segmentation_mask)
 
-            ###
-            # NFE
-            sample_batch, nfe = jax.vmap(partial_sample_fn)(src_batch, ode_key)
-            nfes.append(nfe)
-            ###
-            # T - Euclidean distance
-            if self.enable_path_lengths:
-                # Compute Euclidean distance between samples and inputs
-                if pad_size > 0:
-                    path_lengths.append(
-                        self.rmse_fn(
-                            src_batch.data[:-pad_size], sample_batch[:-pad_size]
-                        )
-                    )
-                else:
-                    path_lengths.append(self.rmse_fn(src_batch.data, sample_batch))
-
-            ###
-            # Decode VAE
-            if self.use_vae:
-                sample_batch = jx_device_put(sample_batch, self.shard)
-                sample_batch = self.vae_decode_fn(sample_batch)
-                sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
-
-            if pad_size > 0:
-                src_batch = easy_unpad(src_batch, pad_size)
-                sample_batch = sample_batch[:-pad_size]
-
-            ####
-            # Compute embeddings
-            # Make a tolerance > 0.05 as it is more numerically stable to noises 
-            sample_segmentation_mask_approx_batch = jnp.expand_dims(
-                ((0.5*sample_batch+0.5) > 0.01).any(axis=1), 
-                axis=1
-            ).astype(src_batch.segmentation_mask.dtype)
-
-            ###
-            # Format samples
             samples = jnp_safe_concat(samples, sample_batch)
             sample_segmentation_mask_approx = jnp_safe_concat(sample_segmentation_mask_approx, sample_segmentation_mask_approx_batch)
-
+            
+            path_lengths.append(path_length)
+            nfes.append(nfe)
+            
+        ###
+        # Calculate embeddings
         for embedding in sample_embeddings:
             embedding_aux = self.auxiliary_data_prep["embedding"][embedding]
             sample_embeddings[embedding] = embedding_aux.embedding_fn(
                     np.asarray(samples),
                     np.asarray(sample_segmentation_mask_approx),
                 )
-        # Make into [0,1] domain 
-        samples = 0.5* samples + 0.5
-                
+            
+  
         ###
         # Base metrics
         eval_dict["nfe"] = jnp.mean(jnp.hstack(nfes))
@@ -611,20 +618,67 @@ class CellMetricComputer:
         ###
         # Sample images
         if self.return_samples:
+            # Adapt from [-1,1] to[0,1]  
+            samples =  samples*0.5 + 0.5
+            inputs = inputs*0.5+ 0.5
+            
+            
             wb_image = generate_wb_image(
                 samples=samples, inputs=inputs, num_samples=self.num_save_samples
             )
             eval_dict["samples"] = wb_image
 
             # We also use the approximated one instead of the real one, should be almost identical (takes into account VAE)
-            inputs_segmentation_mask_approx =  jnp.expand_dims(
-                (inputs > 0.01).any(axis=1), 
-                axis=1
-            ).astype(src_batch.segmentation_mask.dtype)
+            # inputs_segmentation_mask_approx =  jnp.expand_dims(
+            #     (inputs > 0.01).any(axis=1), 
+            #     axis=1
+            # ).astype(src_batch.segmentation_mask.dtype)
+
             wb_image = generate_wb_image(
-                samples=sample_segmentation_mask_approx, inputs=inputs_segmentation_mask_approx, num_samples=self.num_save_samples
+                samples=sample_segmentation_mask_approx, inputs=inputs_segmentation_mask, num_samples=self.num_save_samples
             )
             eval_dict["segmentation_mask_samples"] = wb_image
+
+            ####
+            # Generate multisample
+            loader = iter(self.dataset)
+            src_batch = next(loader)
+            samples = []
+            samples_masks_approx = []
+            k = 7 # Top k closest to consider & samples to generate
+            for _ in range(k): 
+                key, sample_key = jr.split(key)
+                _input, sample_batch, sample_segmentation_mask_approx_batch, _, _ = self.sample_cell(src_batch, partial_sample_fn, sample_key)
+                samples.append(sample_batch*0.5 + 0.5)
+                samples_masks_approx.append(sample_segmentation_mask_approx_batch)
+            eval_dict["multisamples"] = generate_multisample_wb_image(samples=samples, inputs=_input*0.5 + 0.5)
+            eval_dict["segmentation_mask_multisamples"] = generate_multisample_wb_image(samples=samples_masks_approx, inputs=src_batch.segmentation_mask)
+
+            #######
+            # DEBUGGING / CHECK WORKING:
+            # Get closest real images so that one can check if the model is simply copying real cells
+            dist_fn = lambda x, y: jnp.sum(x-y)**2
+            
+            tgt_data = self.auxiliary_data_prep['train_tgt']['no_vae_data']
+            tgt_compare_on = self.auxiliary_data_prep['train_tgt'][self.compare_on]
+            input_compare_on = src_batch[self.compare_on]
+
+            dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_compare_on))(input_compare_on)
+            elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
+            elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
+
+            eval_dict["multisamples_closest_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
+                                                                                  _input*0.5 + 0.5,
+                                                                                  )
+
+
+            dist_matrix = jax.vmap(lambda x: jax.vmap(lambda y: dist_fn(x, y))(tgt_data))(sample_batch)
+            elementwise_closest_idx = jnp.argsort(dist_matrix, axis=1)[:, :k]
+            elementwise_closest = 0.5*tgt_data[elementwise_closest_idx]+0.5
+            eval_dict["multisamples_closest_from_sample_in_tgt_data"] = generate_multisample_wb_image([elementwise_closest[:, i, :, :, :] for i in range(elementwise_closest.shape[1])], 
+                                                                                  sample_batch*0.5 + 0.5,
+                                                                                  )
+
 
 
         return eval_dict
@@ -791,7 +845,9 @@ class CellMetricComputer:
                 source_embedding_2d[:, 1],
                 s=15,
                 color=tum_primary,
-                alpha=1,
+                alpha=0.6,
+                edgecolor=tum_primary,
+                linewidth=0.5,
             )
             ax.scatter(
                 target_embedding_2d[:, 0],
@@ -799,6 +855,8 @@ class CellMetricComputer:
                 s=15,
                 color=tum_green,
                 alpha=0.3,
+                edgecolor=tum_green,
+                linewidth=0.5,
             )
             ax.scatter(
                 embedding_2d[:, 0],

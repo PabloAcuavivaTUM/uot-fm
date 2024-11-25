@@ -2,10 +2,13 @@ import jax
 import einops
 import wandb
 
+import math 
+from PIL import Image
+
 import jax.numpy as jnp 
 import numpy as np  
 
-from typing import Any, Tuple, Union, Optional
+from typing import Any, Tuple, Union, Optional, List 
 from jax.tree_util import register_pytree_node
 
 
@@ -111,3 +114,54 @@ def generate_wb_image(samples : jax.Array, inputs : Optional[jax.Array] = None, 
         )
     
     return wandb.Image(np.array(image_grid))
+
+def generate_multisample_wb_image(samples : List[jax.Array], inputs : jax.Array, num_samples : int = 16):
+    images = [inputs] + samples
+    stacked_images = jnp.stack(images, axis=1)[:num_samples]
+    grid_image = einops.rearrange(stacked_images, 'rows cols c h w -> (rows h) (cols w) c')
+    return wandb.Image(np.array(grid_image))
+
+def to_int_color(color: Tuple[float, float, float]):
+    return (int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+
+def combine_images(images: List[Image.Image], layout: str = "horizontal", border: int = 10, background: str = "white"):
+    if layout not in {"horizontal", "vertical", "grid"}:
+        raise ValueError("Invalid layout. Choose from 'horizontal', 'vertical', or 'grid'.")
+
+    # Calculate dimensions for each layout type
+    if layout == "horizontal":
+        total_width = sum(img.width for img in images) + border * (len(images) - 1)
+        max_height = max(img.height for img in images)
+        combined_image = Image.new("RGB", (total_width, max_height), background)
+
+        x_offset = 0
+        for img in images:
+            combined_image.paste(img, (x_offset, 0))
+            x_offset += img.width + border
+
+    elif layout == "vertical":
+        max_width = max(img.width for img in images)
+        total_height = sum(img.height for img in images) + border * (len(images) - 1)
+        combined_image = Image.new("RGB", (max_width, total_height), background)
+
+        y_offset = 0
+        for img in images:
+            combined_image.paste(img, (0, y_offset))
+            y_offset += img.height + border
+
+    elif layout == "grid":
+        # Determine grid size (square-like layout)
+        grid_size = math.ceil(math.sqrt(len(images)))
+        cell_width = max(img.width for img in images)
+        cell_height = max(img.height for img in images)
+        grid_width = grid_size * cell_width + (grid_size - 1) * border
+        grid_height = grid_size * cell_height + (grid_size - 1) * border
+        combined_image = Image.new("RGB", (grid_width, grid_height), background)
+
+        for idx, img in enumerate(images):
+            row, col = divmod(idx, grid_size)
+            x_offset = col * (cell_width + border)
+            y_offset = row * (cell_height + border)
+            combined_image.paste(img, (x_offset, y_offset))
+
+    return combined_image
