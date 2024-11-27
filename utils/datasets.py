@@ -880,14 +880,23 @@ def campa_cell(
 
     N_src = len(dataset["src"][0])
     N_tgt = len(dataset["tgt"][0])
+    
+    n_src_train = int(n_src_perc * N_src)
+    n_tgt_train = int(n_tgt_perc * N_tgt)
 
     obj_imgs_both = np.concatenate([dataset["src"][0], dataset["tgt"][0]])
     segmentation_masks_both = np.concatenate([dataset["src"][1], dataset["tgt"][1]])
     segmentation_masks_both = segmentation_masks_both.transpose(0,3,1,2) # [B, C, H, W]
     obj_imgs_both = obj_imgs_both.transpose(0,3,1,2) # [B, C, H, W]
+
+    
+    original_eval_data = dict()
+    original_eval_data['src'] = obj_imgs_both[:N_src][n_src_train:]
+    original_eval_data['tgt'] = obj_imgs_both[N_src:][n_tgt_train:]
+    auxiliary_data_prep['original_eval_data'] = EasyDict(original_eval_data)
+
     # TODO: Any data augmentation: Rotations?
     
-
     embeddings = dict()
     aux_embedding =  dict()
     for embedding_name, embedding_kwargs in additional_embedding.items():
@@ -948,13 +957,12 @@ def campa_cell(
         src_data[embedding] = embedding_value[:N_src]
         tgt_data[embedding] = embedding_value[N_src:]
     
-    n_src_train = int(n_src_perc * N_src)
+    
 
     train_src = EasyDict(**{k: v[:n_src_train] for k, v in src_data.items()})
     eval_src = EasyDict(**{k: v[n_src_train:] for k, v in src_data.items()})
 
     # Eval target is not used, therefore to get a bit more target data, we just copy the train tgt dataset for it
-    n_tgt_train = int(n_tgt_perc * N_tgt)
     train_tgt = EasyDict(**{k: v[:n_tgt_train] for k, v in tgt_data.items()})
     eval_tgt = EasyDict(**{k: v[n_tgt_train:] for k, v in tgt_data.items()})
 
@@ -965,5 +973,6 @@ def campa_cell(
     # traing_tgt_copy = {k: deepcopy(v) for k,v in train_tgt.items()}
     # traing_tgt_copy['no_vae_data'] = obj_imgs_both[N_src:][:n_tgt_train]
     # auxiliary_data_prep['train_tgt'] = EasyDict(traing_tgt_copy)
-    
+
+
     return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep

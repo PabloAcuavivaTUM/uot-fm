@@ -536,6 +536,8 @@ class CellMetricComputer:
             sample_batch = jx_device_put(sample_batch, self.shard)
             sample_batch = self.vae_decode_fn(sample_batch)
             sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
+            # EXPERIMENTAL: Make sure to remove artifact for background
+            # sample_batch = jnp.where((0.5*sample_batch+0.5) <= 0.05, -1.0, sample_batch)
 
         if pad_size > 0:
             src_batch = easy_unpad(src_batch, pad_size)
@@ -630,10 +632,11 @@ class CellMetricComputer:
             # Adapt from [-1,1] to[0,1]  
             samples =  samples*0.5 + 0.5
             inputs = inputs*0.5+ 0.5
-            for image_channels, image_idchannels in zip(self.image_channels, self.image_ichannels):
+            for image_channels, image_ichannels in zip(self.image_channels, self.image_ichannels):
+                
                 image_channels_name = '-'.join(image_channels)
-                samples_images = samples[image_idchannels]
-                input_images = inputs[image_idchannels]
+                samples_images = samples[:,image_ichannels]
+                input_images = inputs[:,image_ichannels]
 
                 wb_image = generate_wb_image(
                     samples=samples_images, inputs=input_images, num_samples=self.num_save_samples
@@ -663,10 +666,10 @@ class CellMetricComputer:
                 samples.append(sample_batch*0.5 + 0.5)
                 samples_masks_approx.append(sample_segmentation_mask_approx_batch)
             
-            for image_channels, image_idchannels in zip(self.image_channels, self.image_ichannels):
+            for image_channels, image_ichannels in zip(self.image_channels, self.image_ichannels):
                 image_channels_name = '-'.join(image_channels)
-                samples_images_list = [sample[image_idchannels] for sample in samples]
-                input_images = (_input*0.5 + 0.5)[image_idchannels]
+                samples_images_list = [sample[:,image_ichannels] for sample in samples]
+                input_images = (_input*0.5 + 0.5)[:,image_ichannels]
                 eval_dict[f"multisamples_{image_channels_name}"] = generate_multisample_wb_image(samples=samples_images_list, inputs=input_images)
             
 

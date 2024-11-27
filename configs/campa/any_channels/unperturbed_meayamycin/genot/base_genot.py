@@ -14,12 +14,12 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"testing_three_channel_base_genot"
+    config.name = f"testing_any_channel_base_genot"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
-    config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000]
-    # config.training.num_steps = 200 # Just to check everything is running
+    config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
+    # config.training.num_steps = 2 # Just to check everything is running
 
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64
@@ -93,14 +93,14 @@ def get_config():
         "morphological_features": extend_features(morphological_features, morphological_features_extension),
     }
     for channel in channels:
-        config.eval.cell_embeddings_histograms[f"channel_umap__{channel}"] = intensity_features
+        config.eval.cell_embeddings_histograms[f"channel_features__{channel}"] = intensity_features
 
 
     #### 
     config.model.vae_fns = "naive_concat"
     config.model.input_shape = [4*len(grouped_channels), 32, 32]
     config.data.channels = channels
-    config.eval.image_channels = [grouped_channels]
+    config.eval.image_channels = grouped_channels
     config.data.shape = [3*len(grouped_channels), 256, 256]
 
 

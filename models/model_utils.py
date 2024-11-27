@@ -8,6 +8,7 @@ import ml_collections
 from diffusers import FlaxAutoencoderKL
 from transformers import AutoProcessor, FlaxCLIPModel
 import logging 
+import einops
 
 from models.mlpmixer import Mixer2d
 from models.unified_unet import UNet
@@ -133,9 +134,75 @@ def get_vae_fns(shard: jax.sharding.Sharding, vae_fns : Union[str, bool] ) -> Tu
         return get_base_vae_fns(shard)
     elif vae_fns == "naive_concat":
         return get_naive_concat_vae_fns(shard)
+    elif vae_fns == "2x2":
+        return get_two_by_two_vae(shard)
+    elif vae_fns == "2x2_concat":
+        return get_two_by_two_vae_concat(shard)
     raise ValueError(f"Invalid vae_fns asked for {vae_fns}")
 
-def get_naive_concat_vae_fns(shard: jax.sharding.Sharding):
+def get_two_by_two_vae(shard : jax.sharding.Sharding) -> Tuple[Callable, Callable]:
+    base_encode_fn, base_decode_fn = get_base_vae_fns(shard)
+
+    def encode_fn(image_batch: jax.Array) -> jax.Array:
+        image_batch = einops.rearrange(
+            image_batch,
+            "b (c hc wc) h w -> b c (hc h) (wc w)",
+            c=3,
+            hc=2,
+            wc=2,
+        )
+        latent_batch = base_encode_fn(image_batch)
+        return latent_batch
+    
+    def decode_fn(latent_batch: jax.Array) -> jax.Array:
+        image_batch = base_decode_fn(latent_batch)
+        image_batch = einops.rearrange(
+            image_batch,
+            "b c (hc h) (wc w) -> b (c hc wc) h w",
+            h=256,
+            w=256,
+            hc=2,
+            wc=2,
+            c=3,
+        )
+        return image_batch
+    
+    return encode_fn, decode_fn
+
+def get_two_by_two_vae_concat(shard : jax.sharding.Sharding) -> Tuple[Callable, Callable]:
+    # Notice this function is duplicating some work when moving shapes around, 
+    # it would be faster if done directly, to prevent code reuse and as this is not called to many times, ignore for now. 
+    two_by_two_encode, two_by_two_decode = get_two_by_two_vae(shard)
+    def encode_fn(image_batch : jax.Array) -> jax.Array:
+        latent_batch = two_by_two_encode(image_batch)
+        latent_batch = einops.rearrange(
+            latent_batch,
+            "b c (hc h) (wc w) -> b (c hc wc) h w",
+            h=32,
+            w=32,
+            hc=2,
+            wc=2,
+            c=3,
+        )
+        return latent_batch
+
+    def decode_fn(latent_batch: jax.Array) -> jax.Array:
+        latent_batch = einops.rearrange(
+            latent_batch,
+            "b (c hc wc) h w -> b c (hc h) (wc w)",
+            hc=2,
+            wc=2,
+            c=3,
+        )
+        image_batch = two_by_two_decode(latent_batch)
+        return image_batch
+
+    
+    return encode_fn, decode_fn
+
+
+
+def get_naive_concat_vae_fns(shard: jax.sharding.Sharding) -> Tuple[Callable, Callable]:
     base_encode_fn, base_decode_fn = get_base_vae_fns(shard)
 
     def encode_fn(image_batch: jax.Array) -> jax.Array:
