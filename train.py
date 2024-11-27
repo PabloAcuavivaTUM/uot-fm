@@ -33,6 +33,15 @@ from utils import (
 
 
 def train(config: ml_collections.ConfigDict, workdir: str):
+    ###
+    # Set up image channels ichannel config for image plotting
+    data_channels = config.data.channels
+    grouped_image_channels = config.eval.image_channels 
+    grouped_image_ichannels = []
+    for channel_group in grouped_image_channels:
+        grouped_image_ichannels += [[data_channels.index(channel) for channel in channel_group]]
+    ###
+
     """Training script."""
     jax.config.update("jax_threefry_partitionable", True)
     # create rng keys
@@ -105,6 +114,10 @@ def train(config: ml_collections.ConfigDict, workdir: str):
 
     if config.eval.compute_metrics:
         sample_fn = loss_builder.get_sample_fn()
+       # CHEATY / TODO / REMOVE: Quick testing 
+        # def sample_fn(model, x0, key=None):
+        #     return x0.data, -1.0
+         
         if config.data.source == "campa_cell": # Check we are in cell task (Probably should be different way)
             metric_computer = CellMetricComputer(
                 config=config,
@@ -242,15 +255,18 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                 else:
                     tgt_batch_data = tgt_batch.data
                     src_batch_data = src_batch.data
-                eval_dict.update(
-                    dict(
-                        batch=generate_wb_image(
-                            samples=tgt_batch_data,
-                            inputs=src_batch_data,
-                            num_samples=config.eval.num_save_samples,
-                        )
+
+                for image_channels, image_ichannels in zip(grouped_image_channels, grouped_image_ichannels):
+                    image_channels_name = '-'.join(image_channels)
+                    eval_dict.update(
+                        {
+                            f"batch-{image_channels_name}": generate_wb_image(
+                                samples=tgt_batch_data[:,image_ichannels],
+                                inputs=src_batch_data[:,image_ichannels],
+                                num_samples=config.eval.num_save_samples,
+                            )
+                        }
                     )
-                )
                 #####
                 wandb.log(eval_dict, step=step)
                 if config.training.save_checkpoints:
