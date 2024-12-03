@@ -27,6 +27,7 @@ from copy import deepcopy
 # which gets the data does not need it).
 
 
+
 def get_translation_datasets(
     config: ConfigDict,
     shard: Optional[jax.sharding.Sharding] = None,
@@ -36,16 +37,25 @@ def get_translation_datasets(
     train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
         get_data(config, shard, vae_encode_fn)
     )
-    if config.data.low_pass_filter:
+    if config.data.get('low_pass_filter', False):
+        # ! WARNING: Not compatible with multiple targets, part of the old code... probable remove
         train_source["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in train_source.data])
         train_target["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in train_target.data])
         eval_source["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in eval_source.data])
         eval_target["low_freq_data"] = tf.stack([low_pass_filter(d, **config.data.low_pass_filter) for d in eval_target.data])
-
+    
     train_source_ds = prepare_dataset(train_source, config)
     eval_source_ds = prepare_dataset(eval_source, config, evaluation=True)
-    train_target_ds = prepare_dataset(train_target, config)
-    eval_target_ds = prepare_dataset(eval_target, config, evaluation=True)
+    if type(train_target) is dict:
+        train_target_ds = {k: prepare_dataset(train_tgt, config) for k, train_tgt in train_target.items()}
+    else:
+        train_target_ds = prepare_dataset(train_target, config)
+    
+    if type(eval_target) is dict:
+        eval_target_ds = {k: prepare_dataset(eval_tgt, config, evaluation=True) for k, eval_tgt in eval_target.items()}
+    else:
+        eval_target_ds = prepare_dataset(eval_target, config, evaluation=True)
+    
     return (
         train_source_ds,
         train_target_ds,
@@ -221,7 +231,7 @@ def get_data(
         train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
             campa_cell(
                 type_src=config.data.type_src,
-                type_tgt=config.data.type_tgt,
+                types_tgt=config.data.type_tgt,
                 batch_size=config.training.batch_size,
                 shard=shard,
                 vae_encode_fn=vae_encode_fn,
@@ -252,10 +262,16 @@ def get_data(
 
     if config.overfit_to_one_batch:
         train_source = train_source.slice(slice(0, config.training.batch_size))
-        train_target = train_target.slice(slice(0, config.training.batch_size))
+        if type(train_target) is dict:
+            train_target = {k: train_tgt.slice(slice(0, config.training.batch_size)) for k, train_tgt in train_target.items()}
+        else:
+            train_target = train_target.slice(slice(0, config.training.batch_size))
+        
         eval_source = train_source.slice(slice(0, config.training.batch_size))
-        eval_target = train_target.slice(slice(0, config.training.batch_size))
-
+        if type(eval_target) is dict:
+            eval_target = {k: eval_tgt.slice(slice(0, config.training.batch_size)) for k, eval_tgt in eval_target.items()}
+        else:
+            eval_target = eval_target.slice(slice(0, config.training.batch_size))
     return (
         train_source,
         train_target,
@@ -815,7 +831,7 @@ def compute_cell_embeddings(
 
 def campa_cell(
     type_src: str,
-    type_tgt: str,
+    types_tgt: List[str],
     batch_size: int,
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
@@ -833,11 +849,10 @@ def campa_cell(
     data_dir = "/lustre/groups/ml01/workspace/fm_cv/np_campa"
     additional_embedding = additional_embedding or dict()
     embedding_combinations = embedding_combinations or dict()
-
     # Prepare src and target for dataset
     dataset = dict()
     auxiliary_data_prep = EasyDict()
-    for i, type_name in [("src", type_src), ("tgt", type_tgt)]:
+    for type_name in [type_src] + types_tgt:
         # Load type of data for each well and assign to i (either src or tgt)
         obj_imgs_wells = []
         segmentation_masks_wells = []
@@ -853,8 +868,9 @@ def campa_cell(
             obj_imgs_wells.append(obj_imgs)
             segmentation_masks = np.load(os.path.join(well_path, f"segmentation_masks.npy"))
             segmentation_masks_wells.append(segmentation_masks)
+
         obj_imgs_wells = np.concatenate(obj_imgs_wells)
-        segmentation_masks_wells = np.concatenate(segmentation_masks_wells)
+        segmentation_masks_wells = np.concatenate(segmentation_masks_wells) 
 
         C = len(channels)
         obj_imgs_wells_max = np.max(obj_imgs_wells.reshape(-1, C), axis=0).reshape(
@@ -875,25 +891,26 @@ def campa_cell(
         segmentation_masks_wells = segmentation_masks_wells[~too_small_mask]
         ###
 
-        dataset[i] = (obj_imgs_wells, segmentation_masks_wells)
-        auxiliary_data_prep[i] = dict(max=obj_imgs_wells_max)
+        dataset[type_name] = (obj_imgs_wells, segmentation_masks_wells)
+        auxiliary_data_prep[type_name] = dict(max=obj_imgs_wells_max)
 
-    N_src = len(dataset["src"][0])
-    N_tgt = len(dataset["tgt"][0])
+    n_src = len(dataset[type_src][0])
+    N_tgt = [len(dataset[type_tgt][0]) for type_tgt in types_tgt]
     
-    n_src_train = int(n_src_perc * N_src)
-    n_tgt_train = int(n_tgt_perc * N_tgt)
+    n_src_train = int(n_src_perc * n_src)
+    N_tgt_train = [int(n_tgt_perc * n_tgt) for n_tgt in N_tgt]
 
-    obj_imgs_both = np.concatenate([dataset["src"][0], dataset["tgt"][0]])
-    segmentation_masks_both = np.concatenate([dataset["src"][1], dataset["tgt"][1]])
-    segmentation_masks_both = segmentation_masks_both.transpose(0,3,1,2) # [B, C, H, W]
-    obj_imgs_both = obj_imgs_both.transpose(0,3,1,2) # [B, C, H, W]
+    obj_imgs_all_types = np.concatenate([dataset[type_src][0]] + [dataset[t_tgt][0] for t_tgt in types_tgt])
+    obj_imgs_all_types = obj_imgs_all_types.transpose(0,3,1,2) # [B, C, H, W]
 
+    segmentation_masks_all_types = np.concatenate([dataset[type_src][1]] + [dataset[t_tgt][1] for t_tgt in types_tgt])
+    segmentation_masks_all_types = segmentation_masks_all_types.transpose(0,3,1,2) # [B, C, H, W]
     
-    original_eval_data = dict()
-    original_eval_data['src'] = obj_imgs_both[:N_src][n_src_train:]
-    original_eval_data['tgt'] = obj_imgs_both[N_src:][n_tgt_train:]
-    auxiliary_data_prep['original_eval_data'] = EasyDict(original_eval_data)
+    
+    # original_eval_data = dict()
+    # original_eval_data['src'] = obj_imgs_both[:N_src][n_src_train:]
+    # original_eval_data['tgt'] = obj_imgs_both[N_src:][n_tgt_train:]
+    # auxiliary_data_prep['original_eval_data'] = EasyDict(original_eval_data)
 
     # TODO: Any data augmentation: Rotations?
     
@@ -912,17 +929,16 @@ def campa_cell(
             # TODO: If we want to add more than one per embedding, don't use pop, also fix above in compute_cell_embedings to get proper embeddings
             idchannel = [i for i, item in enumerate(channels) if item in embedding_channels].pop()
             
-            
         embedding_value, embedding_aux = compute_cell_embeddings(
-            obj_imgs_both,
-            segmentation_masks_both,
+            obj_imgs_all_types,
+            segmentation_masks_all_types,
             embedding_type=embedding_type,
             embedding_kwargs=embedding_kwargs,
             idchannel=idchannel,
         )
         embeddings[embedding_name] = embedding_value
         aux_embedding[embedding_name] = embedding_aux
-            
+        
     auxiliary_data_prep['embedding'] = aux_embedding
     
     for embedding_combination_name, embedding_names in embedding_combinations.items():
@@ -934,37 +950,54 @@ def campa_cell(
                 embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
         embeddings[embedding_combination_name] = embedding_combination
 
+    
     if vae_encode_fn is not None:
-        preprocessed_obj_imgs_both = [
-            preprocess_fn(obj_img) for obj_img in obj_imgs_both
+        preprocessed_obj_imgs_all_types = [
+            preprocess_fn(obj_img) for obj_img in obj_imgs_all_types
         ]
-        obj_imgs_both_vae = compute_vae_encoding(
-            preprocessed_obj_imgs_both,
+        obj_imgs_all_types_vae = compute_vae_encoding(
+            preprocessed_obj_imgs_all_types,
             vae_encode_fn=vae_encode_fn,
             batch_size=batch_size,
             shard=shard,
         )
-        src_data = EasyDict(data=obj_imgs_both_vae[:N_src]) # , uncompressed_data=obj_imgs_both[:N_src])
-        tgt_data = EasyDict(data=obj_imgs_both_vae[N_src:]) # , uncompressed_data=obj_imgs_both[N_src:])
+        source_data = EasyDict(data=obj_imgs_all_types_vae[:n_src]) # , uncompressed_data=obj_imgs_both[:N_src])
+        target_data = EasyDict(data=obj_imgs_all_types_vae[n_src:]) # , uncompressed_data=obj_imgs_both[N_src:])
     else:
-        src_data = EasyDict(data=obj_imgs_both[:N_src])
-        tgt_data = EasyDict(data=obj_imgs_both[N_src:])
+        source_data = EasyDict(data=obj_imgs_all_types[:n_src])
+        target_data = EasyDict(data=obj_imgs_all_types[n_src:])
 
-    src_data["segmentation_mask"] = segmentation_masks_both[:N_src]
-    tgt_data["segmentation_mask"] = segmentation_masks_both[N_src:]
+    source_data["segmentation_mask"] = segmentation_masks_all_types[:n_src]
+    target_data["segmentation_mask"] = segmentation_masks_all_types[n_src:]
 
     for embedding, embedding_value in embeddings.items():
-        src_data[embedding] = embedding_value[:N_src]
-        tgt_data[embedding] = embedding_value[N_src:]
+        source_data[embedding] = embedding_value[:n_src]
+        target_data[embedding] = embedding_value[n_src:]
     
     
 
-    train_src = EasyDict(**{k: v[:n_src_train] for k, v in src_data.items()})
-    eval_src = EasyDict(**{k: v[n_src_train:] for k, v in src_data.items()})
+    train_source = source_data.slice(slice(None, n_src_train))
+    eval_source = source_data.slice(slice(n_src_train, None))
 
-    # Eval target is not used, therefore to get a bit more target data, we just copy the train tgt dataset for it
-    train_tgt = EasyDict(**{k: v[:n_tgt_train] for k, v in tgt_data.items()})
-    eval_tgt = EasyDict(**{k: v[n_tgt_train:] for k, v in tgt_data.items()})
+    train_target = dict()
+    eval_target = dict()
+    n_tgt_counter = 0
+    for j, type_tgt in enumerate(types_tgt):
+        n_tgt = N_tgt[j]
+        type_target_data = target_data.slice(slice(n_tgt_counter, n_tgt_counter + n_tgt))
+        n_tgt_counter = n_tgt_counter + n_tgt
+
+        n_tgt_train = N_tgt_train[j]
+        train_target[type_tgt] = type_target_data.slice(slice(None, n_tgt_train))
+        eval_target[type_tgt] = type_target_data.slice(slice(n_tgt_train, None))
+        perturbation_embedding = jnp.zeros(shape=(n_tgt_train, len(types_tgt)))
+        perturbation_embedding = perturbation_embedding.at[:, j].set(1)
+        train_target[type_tgt]['perturbation_embedding'] = perturbation_embedding
+
+        perturbation_embedding = jnp.zeros(shape=(n_tgt - n_tgt_train, len(types_tgt)))
+        perturbation_embedding = perturbation_embedding.at[:, j].set(1)
+        eval_target[type_tgt]['perturbation_embedding'] = perturbation_embedding
+
 
     ###
     # DEBUGGING: To make sure the moodel is not learn to "memorize" train_tgt. For this also need activate in metrics.py
@@ -973,6 +1006,8 @@ def campa_cell(
     # traing_tgt_copy = {k: deepcopy(v) for k,v in train_tgt.items()}
     # traing_tgt_copy['no_vae_data'] = obj_imgs_both[N_src:][:n_tgt_train]
     # auxiliary_data_prep['train_tgt'] = EasyDict(traing_tgt_copy)
+    # if len(train_target) == 1:
+    #     train_target = next(iter(train_target.values()))
+    #     eval_target = next(iter(eval_target.values()))
 
-
-    return train_src, train_tgt, eval_src, eval_tgt, auxiliary_data_prep
+    return train_source, train_target, eval_source, eval_target, auxiliary_data_prep

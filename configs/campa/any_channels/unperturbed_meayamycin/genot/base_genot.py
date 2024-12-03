@@ -14,7 +14,7 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"testing_any_channel_base_genot"
+    config.name = f"any_channel_base_genot_meayamycin"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
@@ -26,7 +26,7 @@ def get_config():
     config.training.batch_size_matching = 256
 
 
-    config.eval.checkpoint_metric = '[channel_umap__00_EU]-FID-target'
+    config.eval.checkpoint_metric = '184A1_meayamycin.[channel_umap__00_EU]-FID-target'
 
     ####
     #

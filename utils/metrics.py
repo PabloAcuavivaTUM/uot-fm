@@ -438,7 +438,7 @@ class CellMetricComputer:
             self.num_save_samples = config.eval.num_save_samples
 
         self.dataset = eval_src_ds
-        self.target_dataset = eval_tgt_ds
+        self.target_datasets = eval_tgt_ds
         self.input_shape = config.model.input_shape
         self.sample_fn = sample_fn
         self.enable_mse = config.eval.enable_mse
@@ -473,11 +473,9 @@ class CellMetricComputer:
         self.cell_embeddings_histograms = config.eval.cell_embeddings_histograms
         additional_embedding = config.data.additional_embedding
 
-        for name, dataset in dict(
-            dataset=self.dataset, target_dataset=self.target_dataset
-        ).items():
+        for name, dataset in [("src_dataset", self.dataset)] + list(self.target_datasets.items()):
             additional_embedding = {embedding: [] for embedding in additional_embedding}
-            eval_num_iter = dataset.length // self.batch_size + 1
+            eval_num_iter = dataset.length // self.batch_size + (dataset.length % self.batch_size != 0)
             loader = iter(dataset)
             for _ in tqdm(range(eval_num_iter)):
                 batch = next(loader)
@@ -491,9 +489,15 @@ class CellMetricComputer:
 
             self.additional_embeddings[name] = additional_embedding
 
+
+        # Keep a sample of each perturbation embedding employed 
+        self.perturbations = dict()
+        for perturbation_name, target_dataset in self.target_datasets.items():
+            self.perturbations[perturbation_name] = next(iter(target_dataset))['perturbation_embedding'][0]
+        
         ##
         # DEBUGGING: Checking compare on to see real cells which are closest to generated
-        self.compare_on = config.training.compare_on
+        # self.compare_on = config.training.compare_on
 
     def sample_cell(self, src_batch : EasyDict, partial_sample_fn : Callable, key : jr.KeyArray):
         # Padding for last batch if necessary
@@ -536,7 +540,7 @@ class CellMetricComputer:
             sample_batch = jx_device_put(sample_batch, self.shard)
             sample_batch = self.vae_decode_fn(sample_batch)
             sample_batch = jnp.clip(sample_batch, -1.0, 1.0)
-            # EXPERIMENTAL: Make sure to remove artifact for background
+            # EXPERIMENTAL: Make sure to remove artifact for background -> It works worse, DO NOT USE!
             # sample_batch = jnp.where((0.5*sample_batch+0.5) <= 0.05, -1.0, sample_batch)
 
         if pad_size > 0:
@@ -554,6 +558,13 @@ class CellMetricComputer:
         return _input, sample_batch, sample_segmentation_mask_approx_batch, nfe, path_length
 
     def compute_metrics(self, model: eqx.Module, key: jr.KeyArray):
+        eval_dict = dict()
+        for perturbation_name in self.perturbations:
+            key, perturbation_key = jr.split(key)
+            eval_dict.update({f'{perturbation_name}.{k}': v for k, v in self.compute_metrics_perturbation(model, perturbation_name, perturbation_key).items()})
+        return eval_dict
+
+    def compute_metrics_perturbation(self, model: eqx.Module, perturbation_name : str, key: jr.KeyArray):
         """
         Compute metrics for evaluation on cell data.
 
@@ -578,11 +589,15 @@ class CellMetricComputer:
         nfes = []
 
         # Compute metrics batch-wise
-        eval_num_iter = self.num_eval_samples // self.batch_size + 1
+        eval_num_iter = self.num_eval_samples // self.batch_size + (self.num_eval_samples % self.batch_size != 0)
         loader = iter(self.dataset)
 
         # Create vmap functions
-        partial_sample_fn = ft.partial(self.sample_fn, model)
+        perturbation_embedding = self.perturbations[perturbation_name]
+        # partial_sample_fn = ft.partial(self.sample_fn, model=model, perturbation_embedding=perturbation_embedding)
+        def partial_sample_fn(x, key=None):
+            return self.sample_fn(model, x, key, perturbation_embedding=perturbation_embedding)
+            
         for _ in tqdm(range(eval_num_iter)):
             src_batch = next(loader)
             key, sample_key = jr.split(key)
@@ -621,6 +636,7 @@ class CellMetricComputer:
         # Cell metrics 
         eval_dict_cell = self.compute_cell_metrics(
             embeddings=sample_embeddings,
+            perturbation_name=perturbation_name,
         )
         eval_dict.update(eval_dict_cell)
 
@@ -707,6 +723,7 @@ class CellMetricComputer:
     def compute_cell_metrics(
         self,
         embeddings: dict[str, np.ndarray],
+        perturbation_name : str,
     ) -> dict:
         ###
         # Compute cell metrics from embeddings
@@ -716,8 +733,8 @@ class CellMetricComputer:
             ###
             # Extract embeddings
             embedding_value = embeddings[embedding]
-            source_embedding_value = self.additional_embeddings["dataset"][embedding]
-            target_embedding_value = self.additional_embeddings["target_dataset"][embedding]
+            source_embedding_value = self.additional_embeddings["src_dataset"][embedding]
+            target_embedding_value = self.additional_embeddings[perturbation_name][embedding]
             ###
 
             ###
@@ -781,8 +798,8 @@ class CellMetricComputer:
         for embedding, column_names in self.cell_embeddings_histograms.items():
             # Extract embeddings
             embedding_value = embeddings[embedding]
-            source_embedding_value = self.additional_embeddings["dataset"][embedding]
-            target_embedding_value = self.additional_embeddings["target_dataset"][embedding]
+            source_embedding_value = self.additional_embeddings["src_dataset"][embedding]
+            target_embedding_value = self.additional_embeddings[perturbation_name][embedding]
             ###
             
             embedding_df = np_to_dataframe(embedding_value, columns=column_names)
@@ -797,8 +814,7 @@ class CellMetricComputer:
                                              "Target": tum_green,
                                              "Generated": tum_red,
                                             })
-            eval_dict_cell[f'hist-{embedding}'] = hist_figure
-
+            eval_dict_cell[f'hist-{embedding}'] = hist_figure        
         return eval_dict_cell
 
 

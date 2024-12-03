@@ -268,7 +268,18 @@ class FlowMatching:
         ) -> jax.Array:
             
             # TODO: If we change cross_attn_cond for something different than the VAE / Original image modify this
+            
+            # ! TODO / !WARNING! This is a bit sketchy, but how JaX gets compiled as we will always do the same behaviour should work
+            # Ideally we should refactor the code if we have time 
             film_cond = x0.get("embedding", None)
+            perturbation_embedding = x1.get("perturbation_embedding", None)
+            
+            film_cond = jnp.zeros((0,)) if film_cond is None else film_cond
+            perturbation_embedding = (
+                jnp.zeros((0,)) if perturbation_embedding is None else perturbation_embedding
+            )
+            film_cond = jnp.concatenate([film_cond, perturbation_embedding], axis=0)
+
             cross_attn_cond=x0.data
             ###
 
@@ -383,11 +394,13 @@ class FlowMatching:
         """Get single sample function."""
 
         @eqx.filter_jit
-        def single_sample_fn(model: eqx.Module, x0: EasyDict, key=None) -> jax.Array:
+        def single_sample_fn(model: eqx.Module, x0: EasyDict, key=None, perturbation_embedding : Optional[jax.Array] =None ) -> jax.Array:
             """Produce single sample from the CNF by integrating forward."""
 
             def func(t, x_t, args, x0=x0): 
                 film_cond = x0.get("embedding", None)
+                if perturbation_embedding is not None:
+                    film_cond = jnp.concatenate([film_cond, perturbation_embedding], axis=0)
                 cross_attn_cond=x0.data
                 
                 if self.is_genot and self.x0_plus_noise:

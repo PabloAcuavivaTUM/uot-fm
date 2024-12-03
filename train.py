@@ -32,6 +32,26 @@ from utils import (
 )
 
 
+### Move from here 
+from typing import Dict, Iterable
+
+class RoundRobinIterable:
+    def __init__(self, data : Dict[str, Iterable]):
+        self.data = {k: iter(v) for k,v in data.items()}
+        self.keys = list(data.keys())
+        self.current_index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self.keys:
+            raise StopIteration
+        key = self.keys[self.current_index]
+        self.current_index = (self.current_index + 1) % len(self.keys)
+        return next(self.data[key])
+
+
 def train(config: ml_collections.ConfigDict, workdir: str):
     ###
     # Set up image channels ichannel config for image plotting
@@ -65,11 +85,25 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds, auxiliary_data_prep = (
             get_translation_datasets(config, shard, vae_encode_fn)
         )
-        train_src_loader, train_tgt_loader = iter(train_src_ds), iter(train_tgt_ds)
+        train_src_loader = iter(train_src_ds)
+        if type(train_tgt_ds) is dict:
+            # Here we can define a custom samoling strategy (parametrize), for now choose a base one and continue
+            train_tgt_loader = RoundRobinIterable(train_tgt_ds)
+        else:
+            train_tgt_loader = iter(train_tgt_ds)
         logging.info(f"num_train_src: {train_src_ds.length}")
-        logging.info(f"num_train_tgt: {train_tgt_ds.length}")
+        if type(train_tgt_ds) is dict:
+            lengths = {k: itrain_tgt_ds.length for k, itrain_tgt_ds in train_tgt_ds.items()}
+            logging.info(f"num_train_tgt: {lengths}")
+        else:
+            logging.info(f"num_train_tgt: {train_tgt_ds.length}")
         logging.info(f"num_eval_src: {eval_src_ds.length}")
-        logging.info(f"num_eval_tgt: {eval_tgt_ds.length}")
+        if type(eval_tgt_ds) is dict:
+            lengths = {k: ieval_tgt_ds.length for k, ieval_tgt_ds in eval_tgt_ds.items()}
+            logging.info(f"num_eval_tgt: {lengths}")
+        else:
+            logging.info(f"num_eval_tgt: {eval_tgt_ds.length}")
+
     elif config.task == "generation":
         # TODO: It does not work, as it does not return easydict. Notice we can probably unify all this in "get_datasets"
         train_loader = get_generation_datasets(config)
@@ -113,10 +147,12 @@ def train(config: ml_collections.ConfigDict, workdir: str):
         ema_state = None
 
     if config.eval.compute_metrics:
-        sample_fn = loss_builder.get_sample_fn()
-       # CHEATY / TODO / REMOVE: Quick testing 
-        # def sample_fn(model, x0, key=None):
-        #     return x0.data, -1.0
+        if config.get('hack_sample_fn', False):
+            # CHEATY / TODO / REMOVE: Quick testing 
+            def sample_fn(model, x0, key=None, perturbation_embedding=None):
+                return x0.data, -1.0    
+        else:
+            sample_fn = loss_builder.get_sample_fn()
          
         if config.data.source == "campa_cell": # Check we are in cell task (Probably should be different way)
             metric_computer = CellMetricComputer(
@@ -250,8 +286,8 @@ def train(config: ml_collections.ConfigDict, workdir: str):
                 logging.info(f"Step {step}, Metrics: {eval_dict}")
                 # Include current batched sample
                 if config.model.use_vae:
-                    tgt_batch_data = vae_decode_fn(tgt_batch.data) * 0.5 + 0.5
-                    src_batch_data = vae_decode_fn(src_batch.data) * 0.5 + 0.5
+                    tgt_batch_data = jnp.clip(vae_decode_fn(tgt_batch.data), -1.0, 1.0) * 0.5 + 0.5
+                    src_batch_data = jnp.clip(vae_decode_fn(src_batch.data), -1.0, 1.0) * 0.5 + 0.5
                 else:
                     tgt_batch_data = tgt_batch.data
                     src_batch_data = src_batch.data

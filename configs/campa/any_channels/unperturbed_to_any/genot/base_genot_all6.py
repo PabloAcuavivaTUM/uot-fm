@@ -2,8 +2,9 @@ from configs.campa.any_channels.unperturbed_to_any.uotfm import get_config as ba
 from itertools import chain
 
 ####
-# OBJECTIVE: General template
+# OBJECTIVE: See *all3_0.py and *all3_1.py
 ####
+
 
 def extend_features(features, extension_dict):
     # We need it to properly deal with named features which generate multiple features
@@ -18,15 +19,13 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"any_channel_any_perturbation_base_genot"
+    config.name = f"6channels_all_perturbation_base_genot"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
     config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
-    # config.training.num_steps = 2 # DEBUGGING I
-    
-    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide"]
-
+    config.training.num_steps = 450_000 
+    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide", "184A1_TSA", "184A1_AZD4573"]
 
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64

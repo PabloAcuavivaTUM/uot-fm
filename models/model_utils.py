@@ -35,6 +35,8 @@ def get_model(
             key=model_key,
         )
     elif config.model.type == "unet":
+        tgts_list = config.data.get("type_tgt", [])
+        perturbation_embedding_dim = len(tgts_list)
         return UNet(
             in_data_shape,
             out_data_shape,
@@ -54,7 +56,7 @@ def get_model(
             film_down=config.model.film_down,
             film_up=config.model.film_up,
             film_middle=config.model.film_middle,
-            film_cond_dim=config.model.film_cond_dim + config.training.get("genot", dict()).get("use_fb_embedding", 0), 
+            film_cond_dim=config.model.film_cond_dim + config.training.get("genot", dict()).get("use_fb_embedding", 0) + perturbation_embedding_dim, 
             ###
             key=model_key,
         )

@@ -2,7 +2,7 @@ from configs.campa.any_channels.unperturbed_to_any.uotfm import get_config as ba
 from itertools import chain
 
 ####
-# OBJECTIVE: General template
+# OBJECTIVE: Quick hack to see effect of encode decode VAE
 ####
 
 def extend_features(features, extension_dict):
@@ -17,15 +17,16 @@ def extend_features(features, extension_dict):
 
 def get_config():
     config = base_uotfm_cfg()
-
-    config.name = f"any_channel_any_perturbation_base_genot"
+    config.hack_sample_fn = True
+    config.name = f"enc_dec_meayamycin"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
-    config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
-    # config.training.num_steps = 2 # DEBUGGING I
+    config.training.eval_freq_points = [1] 
+    config.training.num_steps = 2 # DEBUGGING I
     
-    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide"]
+    config.data.type_src="184A1_meayamycin"
+    config.data.type_tgt=["184A1_meayamycin"]
 
 
     # Make sure if fits into 1 GPU

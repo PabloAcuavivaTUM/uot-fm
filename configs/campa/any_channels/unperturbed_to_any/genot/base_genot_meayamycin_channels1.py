@@ -2,7 +2,8 @@ from configs.campa.any_channels.unperturbed_to_any.uotfm import get_config as ba
 from itertools import chain
 
 ####
-# OBJECTIVE: General template
+# OBJECTIVE: This with *_channels0 -> To checkk if learning the mapping by channels and learning it together 
+# gives difference in accuracy
 ####
 
 def extend_features(features, extension_dict):
@@ -18,14 +19,14 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"any_channel_any_perturbation_base_genot"
+    config.name = f"3_1channel_meayamycin_base_genot"
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
     config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
     # config.training.num_steps = 2 # DEBUGGING I
     
-    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide"]
+    config.data.type_tgt=["184A1_meayamycin"] # , "184A1_CX5461", "184A1_triptolide"]
 
 
     # Make sure if fits into 1 GPU
@@ -33,7 +34,7 @@ def get_config():
     config.training.batch_size_matching = 256
 
 
-    config.eval.checkpoint_metric = '184A1_meayamycin.[channel_umap__00_EU]-FID-target'
+    config.eval.checkpoint_metric = '184A1_meayamycin.[channel_umap__15_U2SNRNPB]-FID-target'
 
     ####
     #
@@ -69,7 +70,7 @@ def get_config():
 
     channels0 = ["00_EU", "20_SP100", "12_RB1_pS807_S811"]
     channels1 = ["07_H2B","15_U2SNRNPB", "20_ALYREF"]
-    grouped_channels = [channels0, channels1]
+    grouped_channels = [channels1] # , channels0]
     channels = list(chain.from_iterable(grouped_channels))
 
 
