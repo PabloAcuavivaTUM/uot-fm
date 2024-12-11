@@ -83,7 +83,7 @@ def train(config: ml_collections.ConfigDict, workdir: str):
 
     if config.task == "translation":
         train_src_ds, train_tgt_ds, eval_src_ds, eval_tgt_ds, auxiliary_data_prep = (
-            get_translation_datasets(config, shard, vae_encode_fn)
+            get_translation_datasets(config, shard, vae_encode_fn=vae_encode_fn, vae_decode_fn=vae_decode_fn)
         )
         train_src_loader = iter(train_src_ds)
         if type(train_tgt_ds) is dict:

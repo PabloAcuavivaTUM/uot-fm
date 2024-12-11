@@ -32,10 +32,11 @@ def get_translation_datasets(
     config: ConfigDict,
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
+    vae_decode_fn: Optional[Callable] = None, 
 ) -> List[tf.data.Dataset]:
     """Get translation datasets and prepare them."""
     train_source, train_target, eval_source, eval_target, auxiliary_data_prep = (
-        get_data(config, shard, vae_encode_fn)
+        get_data(config, shard, vae_encode_fn, vae_decode_fn)
     )
     if config.data.get('low_pass_filter', False):
         # ! WARNING: Not compatible with multiple targets, part of the old code... probable remove
@@ -143,6 +144,7 @@ def get_data(
     config: ConfigDict,
     shard: Optional[jax.sharding.Sharding] = None,
     vae_encode_fn: Optional[Callable] = None,
+    vae_decode_fn: Optional[Callable] = None # Hacky
 ) -> List[Union[np.ndarray, Dict[str, np.ndarray]]]:
     """Load source and target, train and evaluation data."""
     auxiliary_data_prep = None
@@ -239,6 +241,8 @@ def get_data(
                 channels=config.data.channels,
                 additional_embedding=config.data.additional_embedding,
                 embedding_combinations=config.data.embedding_combinations,
+                vae_decode_fn=vae_decode_fn,
+                embedding_before_vae=config.get('hacky_embedding_before_vae', True)
             )
         )
     else:
@@ -841,6 +845,9 @@ def campa_cell(
     embedding_combinations : Optional[Dict[str,list[str]]] = None,
     n_src_perc : float = 0.75,
     n_tgt_perc : float = 0.66, 
+    # TODO: Remove or clean, see below
+    vae_decode_fn = None,
+    embedding_before_vae = True,
 ) -> Tuple[
     EasyDict,
     EasyDict,
@@ -914,41 +921,42 @@ def campa_cell(
 
     # TODO: Any data augmentation: Rotations?
     
-    embeddings = dict()
-    aux_embedding =  dict()
-    for embedding_name, embedding_kwargs in additional_embedding.items():
-        # Hack to only give one specific channel embedding
-        if '__' in embedding_name:
-            embedding_type, embedding_channels = embedding_name.split('__')
-        else:
-            embedding_type, embedding_channels = embedding_name, ''
+    if embedding_before_vae: # TODO: Modify this so is is cleaner... We just want a super quick test
+        embeddings = dict()
+        aux_embedding =  dict()
+        for embedding_name, embedding_kwargs in additional_embedding.items():
+            # Hack to only give one specific channel embedding
+            if '__' in embedding_name:
+                embedding_type, embedding_channels = embedding_name.split('__')
+            else:
+                embedding_type, embedding_channels = embedding_name, ''
 
-        idchannel = None
-        if embedding_channels:
-            embedding_channels = set(embedding_channels.split('|'))
-            # TODO: If we want to add more than one per embedding, don't use pop, also fix above in compute_cell_embedings to get proper embeddings
-            idchannel = [i for i, item in enumerate(channels) if item in embedding_channels].pop()
+            idchannel = None
+            if embedding_channels:
+                embedding_channels = set(embedding_channels.split('|'))
+                # TODO: If we want to add more than one per embedding, don't use pop, also fix above in compute_cell_embedings to get proper embeddings
+                idchannel = [i for i, item in enumerate(channels) if item in embedding_channels].pop()
+                
+            embedding_value, embedding_aux = compute_cell_embeddings(
+                obj_imgs_all_types,
+                segmentation_masks_all_types,
+                embedding_type=embedding_type,
+                embedding_kwargs=embedding_kwargs,
+                idchannel=idchannel,
+            )
+            embeddings[embedding_name] = embedding_value
+            aux_embedding[embedding_name] = embedding_aux
             
-        embedding_value, embedding_aux = compute_cell_embeddings(
-            obj_imgs_all_types,
-            segmentation_masks_all_types,
-            embedding_type=embedding_type,
-            embedding_kwargs=embedding_kwargs,
-            idchannel=idchannel,
-        )
-        embeddings[embedding_name] = embedding_value
-        aux_embedding[embedding_name] = embedding_aux
+        auxiliary_data_prep['embedding'] = aux_embedding
         
-    auxiliary_data_prep['embedding'] = aux_embedding
-    
-    for embedding_combination_name, embedding_names in embedding_combinations.items():
-        embedding_combination = None 
-        for embedding_name in embedding_names:
-            if embedding_combination is None:
-                embedding_combination = embeddings[embedding_name]
-            else:        
-                embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
-        embeddings[embedding_combination_name] = embedding_combination
+        for embedding_combination_name, embedding_names in embedding_combinations.items():
+            embedding_combination = None 
+            for embedding_name in embedding_names:
+                if embedding_combination is None:
+                    embedding_combination = embeddings[embedding_name]
+                else:        
+                    embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
+            embeddings[embedding_combination_name] = embedding_combination
 
     
     if vae_encode_fn is not None:
@@ -970,12 +978,56 @@ def campa_cell(
     source_data["segmentation_mask"] = segmentation_masks_all_types[:n_src]
     target_data["segmentation_mask"] = segmentation_masks_all_types[n_src:]
 
+    if not embedding_before_vae: # TODO: See prev clean up, this is just a dirty quick copy
+        embeddings = dict()
+        aux_embedding =  dict()
+        obj_imgs_all_types_after_vae = jnp.clip(compute_vae_encoding(
+                                                obj_imgs_all_types_vae, 
+                                                vae_encode_fn=vae_decode_fn, 
+                                                batch_size=batch_size, 
+                                                shard=shard,
+                                                ), 
+                                        -1.0, 
+                                        1.0,
+        )
+        for embedding_name, embedding_kwargs in additional_embedding.items():
+            # Hack to only give one specific channel embedding
+            if '__' in embedding_name:
+                embedding_type, embedding_channels = embedding_name.split('__')
+            else:
+                embedding_type, embedding_channels = embedding_name, ''
+
+            idchannel = None
+            if embedding_channels:
+                embedding_channels = set(embedding_channels.split('|'))
+                # TODO: If we want to add more than one per embedding, don't use pop, also fix above in compute_cell_embedings to get proper embeddings
+                idchannel = [i for i, item in enumerate(channels) if item in embedding_channels].pop()
+                
+            embedding_value, embedding_aux = compute_cell_embeddings(
+                obj_imgs_all_types_after_vae,
+                segmentation_masks_all_types,
+                embedding_type=embedding_type,
+                embedding_kwargs=embedding_kwargs,
+                idchannel=idchannel,
+            )
+            embeddings[embedding_name] = embedding_value
+            aux_embedding[embedding_name] = embedding_aux
+            
+        auxiliary_data_prep['embedding'] = aux_embedding
+        
+        for embedding_combination_name, embedding_names in embedding_combinations.items():
+            embedding_combination = None 
+            for embedding_name in embedding_names:
+                if embedding_combination is None:
+                    embedding_combination = embeddings[embedding_name]
+                else:        
+                    embedding_combination = np.concatenate((embedding_combination, embeddings[embedding_name]), axis=-1)
+            embeddings[embedding_combination_name] = embedding_combination
+
     for embedding, embedding_value in embeddings.items():
         source_data[embedding] = embedding_value[:n_src]
         target_data[embedding] = embedding_value[n_src:]
     
-    
-
     train_source = source_data.slice(slice(None, n_src_train))
     eval_source = source_data.slice(slice(n_src_train, None))
 
