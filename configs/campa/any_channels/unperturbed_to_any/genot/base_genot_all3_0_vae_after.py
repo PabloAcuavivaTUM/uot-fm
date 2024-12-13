@@ -19,7 +19,9 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"3_0channels_all_perturbation_base_genot"
+    config.name = f"3_0channels_all_perturbation_base_genot_vae_after"
+    config.hacky_embedding_before_vae = False # ! HACKY!!
+
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"

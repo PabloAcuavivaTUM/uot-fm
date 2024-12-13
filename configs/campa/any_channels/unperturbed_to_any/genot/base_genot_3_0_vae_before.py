@@ -19,13 +19,15 @@ def extend_features(features, extension_dict):
 def get_config():
     config = base_uotfm_cfg()
 
-    config.name = f"3_0channels_all_perturbation_base_genot"
+    config.name = f"3_0channels_all_perturbation_base_genot_vae_before"
+    config.hacky_embedding_before_vae = True  # ! HACKY!!
+
     config.wandb_group = "campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
     config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
-    config.training.num_steps = 450_000 
-    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide", "184A1_TSA", "184A1_AZD4573"]
+    config.training.num_steps = 300_000 
+    config.data.type_tgt=["184A1_meayamycin"]# , "184A1_CX5461"] #, "184A1_triptolide", "184A1_TSA", "184A1_AZD4573"]
 
     # Make sure if fits into 1 GPU
     config.training.batch_size = 64

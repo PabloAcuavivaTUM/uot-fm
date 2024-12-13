@@ -242,7 +242,9 @@ def get_data(
                 additional_embedding=config.data.additional_embedding,
                 embedding_combinations=config.data.embedding_combinations,
                 vae_decode_fn=vae_decode_fn,
-                embedding_before_vae=config.get('hacky_embedding_before_vae', True)
+                embedding_before_vae=config.get('hacky_embedding_before_vae', True),
+                augment_factor_src=config.data.get('augment_factor_src', 0.0),
+                augment_factor_tgt=config.data.get('augment_factor_tgt', 0.0),
             )
         )
     else:
@@ -848,6 +850,8 @@ def campa_cell(
     # TODO: Remove or clean, see below
     vae_decode_fn = None,
     embedding_before_vae = True,
+    augment_factor_src : float = 0.0,
+    augment_factor_tgt : float = 0.0, 
 ) -> Tuple[
     EasyDict,
     EasyDict,
@@ -906,6 +910,68 @@ def campa_cell(
     
     n_src_train = int(n_src_perc * n_src)
     N_tgt_train = [int(n_tgt_perc * n_tgt) for n_tgt in N_tgt]
+
+    # ! WARNING / TODO : This is experimental and we must recheck the implementation
+    def augment_data(data : tuple[np.ndarray, np.ndarray], 
+                     n_data : float, 
+                     n_data_train : float,
+                     augment_factor : float) -> tuple[tuple[np.ndarray, np.ndarray], float, float]:
+        
+        reflect_y_axis = lambda x: x[:, ::-1, :]
+        reflect_x_axis = lambda x: x[::-1, :, :]
+        rotate = np.rot90                           # If we want to define a different angle, add it here
+
+        n_new_train = int(augment_factor * n_data_train)
+
+
+        augmented_data_elements_channels = []
+        augmented_data_elements_masks = []
+        for i in np.random.randint(0, n_data_train, size=(n_new_train,)):
+            element_channels = data[0][i]
+            element_mask =  data[1][i]
+            
+            # Perform augmentation
+            f = np.random.choice([reflect_y_axis, reflect_x_axis, rotate])            
+            augmented_data_elements_channels.append(f(element_channels))
+            augmented_data_elements_masks.append(f(element_mask))
+            
+        if augmented_data_elements_channels:
+            augmented_data = [
+                np.concatenate((
+                                data[0][:n_data_train], 
+                                np.array(augmented_data_elements_channels), 
+                                data[0][n_data_train:]
+                                )
+                        ),
+                np.concatenate((
+                                data[1][:n_data_train], 
+                                np.array(augmented_data_elements_masks), 
+                                data[1][n_data_train:]
+                                )
+                        )
+            ]
+        else:
+            augmented_data = data 
+
+        # Recalculate new values for total data and train data
+        n_data = n_data + n_new_train
+        n_data_train = n_data_train + n_new_train
+        return tuple(augmented_data), n_data, n_data_train
+
+
+    # Inject data augmentations (done this way as we are building on top of already made code)
+    dataset[type_src], n_src, n_src_train = augment_data(dataset[type_src], 
+                                                         n_src, 
+                                                         n_src_train, 
+                                                         augment_factor_src,
+                                                         )
+    for j, t_tgt in enumerate(types_tgt):
+        dataset[t_tgt], N_tgt[j], N_tgt_train[j] = augment_data(dataset[t_tgt], 
+                                                                N_tgt[j], 
+                                                                N_tgt_train[j], 
+                                                                augment_factor_tgt,
+                                                            )
+
 
     obj_imgs_all_types = np.concatenate([dataset[type_src][0]] + [dataset[t_tgt][0] for t_tgt in types_tgt])
     obj_imgs_all_types = obj_imgs_all_types.transpose(0,3,1,2) # [B, C, H, W]

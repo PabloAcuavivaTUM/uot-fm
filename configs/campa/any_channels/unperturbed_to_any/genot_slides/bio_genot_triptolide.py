@@ -1,9 +1,8 @@
 from configs.campa.any_channels.unperturbed_to_any.uotfm import get_config as base_uotfm_cfg
 from itertools import chain
-
 ####
-# OBJECTIVE: This with *all3_0 -> To checkk if learning the mapping by channels and learning it together 
-# gives difference in accuracy. Same as with one perturbation but with all perturbation
+# OBJECTIVE: This with *_channels1 -> To checkk if learning the mapping by channels and learning it together 
+# gives difference in accuracy
 ####
 
 def extend_features(features, extension_dict):
@@ -16,23 +15,53 @@ def extend_features(features, extension_dict):
             updated_features.append(feature)
     return updated_features
 
+
+bio_channels = {
+    "184A1_meayamycin": [
+        "10_POL2RA_pS2",
+        "01_PABPC1",
+        "09_SRRM2",
+    ],
+    "184A1_CX5461": [
+        "21_NCL",
+        "03_RPS6",
+        "10_H3K27ac",
+    ],
+    "184A1_AZD4573": [
+        "13_POL2RA_pS5",
+        "03_CDK9",
+        "09_SRRM2",
+    ],
+    "184A1_triptolide": [
+        "10_POL2RA_pS2",
+        "13_PABPN1",
+        "08_H3K4me3",
+    ],
+    "184A1_TSA": [
+        "10_H3K27ac",
+        "17_HDAC3",
+        "14_PCNA",
+    ]
+}
+
 def get_config():
     config = base_uotfm_cfg()
-
-    config.name = f"3_0channels_all_perturbation_base_genot"
-    config.wandb_group = "campa"
+    type_tgt = '184A1_triptolide'
+    config.hacky_embedding_before_vae = False 
+    config.name = f"bio_{type_tgt}_base_genot_vae_after"
+    config.wandb_group = "slides_campa"
     config.training.is_genot = True
     config.training.genot.noise = "gaussian"
-    config.training.eval_freq_points = [100, 1_000, 5_000, 10_000, 15_000, 20_000] 
-    config.training.num_steps = 450_000 
-    config.data.type_tgt=["184A1_meayamycin", "184A1_CX5461", "184A1_triptolide", "184A1_TSA", "184A1_AZD4573"]
+    config.training.eval_freq_points = [100, 10_000, 15_000, 20_000, 30_000, 35_000, 40_000] 
+    config.training.num_steps = 400_000
+    
+    config.data.type_tgt=[type_tgt] # , "184A1_CX5461", "184A1_triptolide"]
+
 
     # Make sure if fits into 1 GPU
-    config.training.batch_size = 64
+    config.training.batch_size = 128
     config.training.batch_size_matching = 256
 
-
-    config.eval.checkpoint_metric = '184A1_meayamycin.[channel_umap__00_EU]-FID-target'
 
     ####
     #
@@ -66,11 +95,11 @@ def get_config():
                             ]
     morphological_features_extension = {'bbox': 4, 'centroid': 2}
 
-    channels0 = ["00_EU", "20_SP100", "12_RB1_pS807_S811"]
-    #channels1 = ["07_H2B","15_U2SNRNPB", "20_ALYREF"]
-    grouped_channels = [channels0]#, channels1]
+    channels0 = bio_channels[type_tgt]
+    grouped_channels = [channels0] # , channels1]
     channels = list(chain.from_iterable(grouped_channels))
 
+    config.eval.checkpoint_metric = f'{type_tgt}.[channel_umap__{channels0[0]}]-FID-target'
 
     config.data.additional_embedding = {
       "morphological_features": dict(features_list=morphological_features, random_state=42),
@@ -103,7 +132,7 @@ def get_config():
 
 
     #### 
-    config.model.vae_fns = "legacy"
+    config.model.vae_fns = "naive_concat"
     config.model.input_shape = [4*len(grouped_channels), 32, 32]
     config.data.channels = channels
     config.eval.image_channels = grouped_channels
